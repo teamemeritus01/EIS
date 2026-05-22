@@ -73,11 +73,14 @@ function parsePASheet(wb) {
     const ccActuals        = safeNum(row[6]);
     const ccPct            = safeNum(row[7]);
     const ahtActuals       = safeNum(row[8]);
-    const ahtPct           = safeNum(row[9]);
+    const ahtPctRaw        = safeNum(row[9]);
+    const ahtPct           = ahtPctRaw === null ? null : ahtPctRaw > 1 ? ahtPctRaw : ahtPctRaw * 100;
     const ttfaActuals      = safeNum(row[10]);
-    const ttfaPct          = safeNum(row[11]);
+    const ttfaPctRaw       = safeNum(row[11]);
+    const ttfaPct          = ttfaPctRaw === null ? null : ttfaPctRaw > 1 ? ttfaPctRaw : ttfaPctRaw * 100;
     const pttActuals       = safeNum(row[12]);
-    const pttPct           = safeNum(row[13]);
+    const pttPctRaw        = safeNum(row[13]);
+    const pttPct           = pttPctRaw === null ? null : pttPctRaw > 1 ? pttPctRaw : pttPctRaw * 100;
     const bscScore         = safeNum(row[14]) * 100; // stored as 0-1 fraction? No, check
     // BSC in file appears to already be 0-100 scale based on our data (99.68, 94.25, etc.)
     const bscRaw           = safeNum(row[14]);
@@ -86,7 +89,8 @@ function parsePASheet(wb) {
     const totalTT          = safeNum(row[16]);
     const pureTTFA         = safeNum(row[17]);
     const empId            = row[18] ? String(row[18]).trim() : '';
-    const adjTTFA          = safeNum(row[19]);
+    const adjTTFARaw       = safeNum(row[19]);
+    const adjTTFA          = adjTTFARaw > 1 ? adjTTFARaw / 100 : adjTTFARaw;
     const deflection       = safeNum(row[20]);
 
     const advisor = {
@@ -278,7 +282,8 @@ function parseD1Sheet(wb) {
     if (cell0 === 'OR' || cell0 === 'TL' || cell0 === 'PA') { mode = cell0; continue; }
     if (!row[1] && !row[6]) continue;
 
-    const bsc = safeNum(row[14]);
+    const bscRaw = safeNum(row[14]);
+    const bsc = bscRaw === null ? null : bscRaw > 1 ? bscRaw : bscRaw * 100;
     if (bsc === null) continue;
 
     d1.push({
@@ -297,7 +302,7 @@ function parseD1Sheet(wb) {
       ttfaPct:      safeNum(row[11]),
       pttActuals:   safeNum(row[12]),
       pttPct:       safeNum(row[13]),
-      bscScore:     bsc,
+      bscScore:     bsc > 1 ? bsc : bsc * 100,
       d1Date,
     });
   }

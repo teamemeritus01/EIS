@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
+import { getCurrentOperationalDay, opDayLabel } from '../../utils/dateUtils.js';
 import { useApp } from '../../store/appStore.jsx';
 
 export default function TopHeader() {
   const { state, setTab, logout } = useApp();
   const { auth, bscData, effortData, reconciliationQueue = [], uploadStatus } = state;
   const [now, setNow] = useState(new Date());
-  const [opDay, setOpDay] = useState(new Date().toISOString().split('T')[0]);
+  const [opDay, setOpDay] = useState(getCurrentOperationalDay());
   const [shiftView, setShiftView] = useState('All');
   const [showNotif, setShowNotif] = useState(false);
   const [refreshTimer, setRefreshTimer] = useState(300); // 5 min
@@ -31,7 +32,7 @@ export default function TopHeader() {
   const fmtRefresh = s => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
 
   // Operational day window label
-  const opDayLabel = (() => {
+  const opDayLabelStr = (() => {
     const d = new Date(opDay + 'T10:00:00');
     const d2 = new Date(d); d2.setDate(d2.getDate() + 1);
     const fmt = dt => dt.toLocaleDateString('en-IN', { day:'numeric', month:'short' });
@@ -49,7 +50,7 @@ export default function TopHeader() {
             <input type="date" value={opDay} onChange={e => setOpDay(e.target.value)}
               style={{ border:'none', background:'transparent', fontSize:11, fontWeight:700, cursor:'pointer', color:'var(--text-primary)', outline:'none' }} />
           </div>
-          <div style={{ fontSize:9, color:'var(--text-muted)' }}>{opDayLabel}</div>
+          <div style={{ fontSize:9, color:'var(--text-muted)' }}>{opDayLabelStr}</div>
         </div>
       </div>
 

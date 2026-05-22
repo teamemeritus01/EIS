@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useApp } from '../../store/appStore.jsx';
 import { exportBSCExcel, exportEffortExcel, exportPDF, exportCSV, copyToTeams } from '../../utils/exportUtils.js';
+import { toDDMMYYYY } from '../../utils/dateUtils.js';
 import { getShiftDates, filterRowsByDate, aggregateFilteredRows, summariseAgg } from '../../parsers/effortParser.js';
 
 export default function ExportCenter() {
@@ -37,7 +38,7 @@ export default function ExportCenter() {
       if (type==='effort_excel') await exportEffortExcel(effortSummary, effortDate);
       if (type==='pdf')     exportPDF(exportList);
       if (type==='bsc_csv') { exportCSV(exportList); }
-      if (type==='teams')   { copyToTeams(exportList); setCopied('teams'); setTimeout(()=>setCopied(''),3000); }
+      if (type==='teams')   { copyToTeams(exportList, 'bsc'); setCopied('teams'); setTimeout(()=>setCopied(''),3000); }
     } catch(e) { console.error(e); }
     setExporting('');
   };

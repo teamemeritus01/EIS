@@ -58,6 +58,7 @@ export async function parseEffortCSV(file) {
         };
 
         const rows        = [];
+        const sessionSigs = new Set(); // in-memory dedup for this upload only
         const anomalies   = [];
         const duplicates  = [];
         const now         = new Date();
@@ -73,14 +74,23 @@ export async function parseEffortCSV(file) {
           const shiftDate = getShiftDate(row.date, row.hour);
           if (!shiftDate) continue;
 
-          // Check for future timestamps
-          const callDate = new Date(row.date);
-          if (callDate > now) {
+          // Check for future timestamps (compare local dates to avoid timezone issues)
+          let callDate;
+          if (row.date && row.date.includes('/')) {
+            const p = row.date.split('/');
+            callDate = new Date(parseInt(p[2]), parseInt(p[0])-1, parseInt(p[1]));
+          } else {
+            callDate = new Date(row.date);
+          }
+          // Compare date only (ignore time) — a future date means tomorrow or later
+          const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const callDayStart = callDate && !isNaN(callDate) ? new Date(callDate.getFullYear(), callDate.getMonth(), callDate.getDate()) : null;
+          if (callDayStart && callDayStart > todayStart) {
             anomalies.push({ ...row, shiftDate, reason: 'Future timestamp' });
             continue;
           }
 
-          // Compute signature for deduplication
+          // Compute signature for deduplication (in-memory only for this upload)
           const sig = getRowSignature({
             advisor: row.advisor,
             createdDate: row.date,
@@ -89,10 +99,11 @@ export async function parseEffortCSV(file) {
             connected: row.connected,
           });
 
-          if (memory.processed[sig]) {
+          if (sessionSigs.has(sig)) {
             duplicates.push({ ...row, shiftDate, sig });
             continue;
           }
+          sessionSigs.add(sig);
 
           // PTT logic
           const isPTT = row.connected === 1 && row.duration > EFFORT_RULES.pttMinDurationMin;
@@ -104,13 +115,9 @@ export async function parseEffortCSV(file) {
             isPTT,
             pttMinutes: isPTT ? row.duration : 0,
           });
-
-          // Add to memory
-          memory.processed[sig] = { date: now.toISOString() };
         }
 
-        // Persist updated memory
-        saveReconciliationMemory(memory);
+        // Memory only used for reconciliation anomalies now
 
         // Aggregate by advisor + shiftDate
         const aggregated = aggregateEffort(rows);

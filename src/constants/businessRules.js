@@ -259,12 +259,26 @@ export const EFFORT_RULES = {
 // Assign shift date based on hour
 export function getShiftDate(createdDateStr, hour) {
   const h = parseInt(hour, 10);
-  const date = new Date(createdDateStr);
-  if (isNaN(date.getTime())) return null;
+  // Parse M/D/YYYY manually to avoid timezone offset issues (critical for IST users)
+  let date;
+  if (typeof createdDateStr === 'string' && createdDateStr.includes('/')) {
+    const parts = createdDateStr.split('/');
+    if (parts.length === 3) {
+      // M/D/YYYY → local date, no UTC conversion
+      date = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
+    } else { date = new Date(createdDateStr); }
+  } else {
+    date = new Date(createdDateStr);
+  }
+  if (!date || isNaN(date.getTime())) return null;
   if (h < EFFORT_RULES.operationalDayStartHour) {
     date.setDate(date.getDate() - 1);
   }
-  return date.toISOString().split('T')[0]; // YYYY-MM-DD
+  // Use LOCAL date components — NOT toISOString() which converts to UTC
+  const y  = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, '0');
+  const da = String(date.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${da}`;
 }
 
 // Generate unique row signature for deduplication
