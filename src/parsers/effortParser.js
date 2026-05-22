@@ -315,3 +315,48 @@ function getDateRange(rows) {
   const dates = rows.map(r => r.shiftDate).sort();
   return { from: dates[0], to: dates[dates.length - 1] };
 }
+
+// ── Filter rows by single operational shift date ──────────
+// shiftDate format: 'YYYY-MM-DD'
+export function filterRowsByDate(rows, shiftDate) {
+  if (!shiftDate || !rows) return rows || [];
+  return rows.filter(r => r.shiftDate === shiftDate);
+}
+
+// ── Get all unique shift dates from rows ──────────────────
+export function getShiftDates(rows) {
+  const dates = [...new Set((rows||[]).map(r => r.shiftDate).filter(Boolean))];
+  return dates.sort();
+}
+
+// ── Reaggregate from a filtered set of rows ───────────────
+export function aggregateFilteredRows(rows) {
+  const agg = {};
+  for (const row of (rows||[])) {
+    if (!agg[row.advisor]) agg[row.advisor] = {};
+    const date = row.shiftDate;
+    if (!agg[row.advisor][date]) agg[row.advisor][date] = { dials:0, connected:0, pttCalls:0, pttMinutes:0, totalTT:0, isProductiveDay:false };
+    const slot = agg[row.advisor][date];
+    slot.dials      += 1;
+    slot.totalTT    += row.duration || 0;
+    if (row.connected === 1) slot.connected += 1;
+    if (row.isPTT)           { slot.pttCalls += 1; slot.pttMinutes += row.pttMinutes || 0; }
+    slot.isProductiveDay = slot.dials >= 20;
+  }
+  return agg;
+}
+
+// ── Summarise aggregated data ─────────────────────────────
+export function summariseAgg(agg) {
+  return Object.entries(agg).map(([name, dateMap]) => {
+    const dates      = Object.values(dateMap);
+    const prodDays   = dates.filter(d => d.isProductiveDay).length;
+    const totalDials = dates.reduce((s,d)=>s+d.dials,0);
+    const totalConn  = dates.reduce((s,d)=>s+d.connected,0);
+    const totalPTT   = dates.reduce((s,d)=>s+d.pttMinutes,0);
+    const totalTT    = dates.reduce((s,d)=>s+d.totalTT,0);
+    const connRate   = totalDials > 0 ? totalConn/totalDials : 0;
+    const avgTalkPerConnect = totalConn > 0 ? totalTT/totalConn : 0;
+    return { name, prodDays, totalDials, totalConn, totalPTT, totalTT, connRate, avgTalkPerConnect };
+  });
+}

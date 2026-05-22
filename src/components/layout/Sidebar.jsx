@@ -7,6 +7,7 @@ const NAV = [
   { section:'INCENTIVE INTELLIGENCE' },
   { id:'incentive',     label:'Incentive Intelligence', icon:'🏆' },
   { id:'d1',            label:'D-1 Command Center',     icon:'📅' },
+  { id:'l7d',           label:'L7D BSC Trend',          icon:'📈' },
   { id:'scenario',      label:'Scenario Engine',        icon:'🎯' },
   { id:'atrisk',        label:'At-Risk Tracker',        icon:'⚠' },
   { section:'EFFORT INTELLIGENCE' },

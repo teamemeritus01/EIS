@@ -7,6 +7,12 @@ import MultiSelect from '../shared/MultiSelect.jsx';
 import DonutChart from '../shared/DonutChart.jsx';
 import BSCTrendChart from '../shared/BSCTrendChart.jsx';
 
+function pctDisp(val) {
+  if (val===null||val===undefined) return '—';
+  const v = val > 1 ? val : val * 100;
+  return Math.round(v) + '%';
+}
+
 export default function IncentiveIntelligence() {
   const { state, getFilteredAdvisors } = useApp();
   const { bscData, effortData, absenceOverrides } = state;
@@ -185,7 +191,7 @@ export default function IncentiveIntelligence() {
                     <td><span className={`bsc-badge ${a.colorClass}`}>{a.bscScore?.toFixed(1)||'—'}</span></td>
                     <td>{a.connectedCalls?.toFixed(1)||'—'}</td>
                     <td>{a.ahtFirstCall?.toFixed(0)||'—'}</td>
-                    <td>{a.adjustedTTFA?(a.adjustedTTFA*100).toFixed(1)+'%':'—'}</td>
+                    <td>{a.adjustedTTFA!=null?(a.adjustedTTFA>1?a.adjustedTTFA.toFixed(1):( a.adjustedTTFA*100).toFixed(1))+'%':'—'}</td>
                     <td>{a.pureTaskTime?.toFixed(1)||'—'}</td>
                     <td><span style={{ fontSize:11, fontWeight:600 }}>{a.slab||'—'}</span></td>
                     <td style={{ fontWeight:800, color: a.payout>=80000?'#166534':a.payout>=40000?'#1e40af':'#6b7280' }}>

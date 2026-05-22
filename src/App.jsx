@@ -17,6 +17,7 @@ import AbsenceManager from './components/pages/AbsenceManager.jsx';
 import ReconciliationCenter from './components/pages/ReconciliationCenter.jsx';
 import ExportCenter from './components/pages/ExportCenter.jsx';
 import QuarterlyConfig from './components/pages/QuarterlyConfig.jsx';
+import L7DTrend from './components/pages/L7DTrend.jsx';
 import ToastContainer from './components/shared/ToastContainer.jsx';
 
 function PlatformShell() {
@@ -40,6 +41,7 @@ function PlatformShell() {
       case 'reconciliation':  return <ReconciliationCenter />;
       case 'export':          return <ExportCenter />;
       case 'config':          return <QuarterlyConfig />;
+      case 'l7d':            return <L7DTrend />;
       default:                return <ExecutiveOverview />;
     }
   };
