@@ -82,7 +82,12 @@ const INITIAL_STATE = {
 
   // Data
   bscData:        _saved?.bscData        || null,
-  effortData:     _saved?.effortData     || null,
+  effortData: (() => {
+    try {
+      const raw = sessionStorage.getItem('em_effort');
+      return raw ? JSON.parse(raw) : (_saved?.effortData || null);
+    } catch { return null; }
+  })(),
   attendanceData: (() => {
     try {
       const raw = sessionStorage.getItem('em_attendance');
@@ -155,12 +160,34 @@ function reducer(state, action) {
 
     case 'ADD_TO_RECON_QUEUE':
       return { ...state, reconciliationQueue: [...state.reconciliationQueue, ...action.payload] };
-    case 'APPROVE_RECON':
+    case 'APPROVE_RECON': {
+      const targetShift = action.targetShiftDate || action.item.shiftDate;
+      // Re-inject approved call into effortData.rows with the corrected shiftDate
+      const reinjectedRow = {
+        ...action.item,
+        shiftDate:    targetShift,
+        originalShiftDate: action.item.shiftDate,
+        reconApproved: true,
+        isPTT: action.item.connected === 1 && (action.item.duration || 0) > 1.5,
+        pttMinutes: (action.item.connected === 1 && (action.item.duration || 0) > 1.5) ? action.item.duration : 0,
+      };
+      const updatedRows = state.effortData
+        ? [...(state.effortData.rows || []).filter(r => r.sig !== action.item.sig), reinjectedRow]
+        : null;
       return {
         ...state,
-        reconciliationQueue:    state.reconciliationQueue.filter(r => r.sig !== action.sig),
-        reconciliationApproved: [...state.reconciliationApproved, { ...action.item, status:'approved', resolvedAt:new Date().toISOString() }],
+        reconciliationQueue: state.reconciliationQueue.filter(r => r.sig !== action.sig),
+        reconciliationApproved: [...state.reconciliationApproved, {
+          ...action.item,
+          status: 'approved',
+          targetShiftDate: targetShift,
+          originalShiftDate: action.item.shiftDate,
+          resolvedAt: new Date().toISOString(),
+          modifiedBy: state.auth.user || 'Admin',
+        }],
+        effortData: state.effortData ? { ...state.effortData, rows: updatedRows } : null,
       };
+    }
     case 'SUPPRESS_RECON':
       return {
         ...state,
@@ -204,10 +231,20 @@ export function AppProvider({ children }) {
 
   const setEffortData = useCallback((data) => {
     dispatch({ type: 'SET_EFFORT_DATA', payload: data });
-    // Don't persist effort rows (too large) — only metadata
+    // Save to sessionStorage (survives navigation + page refresh within session)
     if (data) {
-      const meta = { ...data, rows: undefined };
-      try { persistState({ effortMeta: meta }); } catch {}
+      try {
+        const serialized = JSON.stringify(data);
+        if (serialized.length < 8 * 1024 * 1024) { // 8MB limit
+          sessionStorage.setItem('em_effort', serialized);
+        } else {
+          // Too large — save without raw rows but keep aggregated
+          const lite = { ...data, rows: data.rows?.slice(0, 5000) };
+          sessionStorage.setItem('em_effort', JSON.stringify(lite));
+        }
+      } catch(e) { console.warn('Effort sessionStorage save failed:', e.message); }
+    } else {
+      sessionStorage.removeItem('em_effort');
     }
   }, []);
 
@@ -271,7 +308,7 @@ export function AppProvider({ children }) {
 
   // Reconciliation
   const addToReconQueue = useCallback((items) => dispatch({ type: 'ADD_TO_RECON_QUEUE', payload: items }), []);
-  const approveRecon    = useCallback((sig, item) => dispatch({ type: 'APPROVE_RECON', sig, item }), []);
+  const approveRecon    = useCallback((sig, item, targetShiftDate) => dispatch({ type: 'APPROVE_RECON', sig, item, targetShiftDate }), []);
   const suppressRecon   = useCallback((sig, item) => dispatch({ type: 'SUPPRESS_RECON', sig, item }), []);
   const ignoreRecon     = useCallback((sig, item) => dispatch({ type: 'IGNORE_RECON', sig, item }), []);
 

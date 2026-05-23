@@ -19,7 +19,11 @@ function pctDisp(val) {
 // ── Inline Scenario Panel (expands below advisor in table) ─
 function InlineScenario({ advisor, totalAdvisors, onClose }) {
   const [selScenario, setSelScenario] = useState(null);
-  const sc = useMemo(() => generateScenarios(advisor, totalAdvisors), [advisor]);
+  const sc = useMemo(() => {
+    try { return generateScenarios(advisor, totalAdvisors); }
+    catch(e) { return null; }
+  }, [advisor]);
+  if (!sc) return <div style={{padding:20,color:'var(--txt3)'}}>Scenario data unavailable for this advisor.</div>;
 
   return (
     <tr>
@@ -169,6 +173,7 @@ export default function IncentiveIntelligence() {
   const red         = advisors.filter(a=>a.bscScore<60);
 
   const handleSort = k => { if (sortKey===k) setSortDir(d=>d==='asc'?'desc':'asc'); else { setSortKey(k); setSortDir('asc'); } };
+  const isFiltered = tlFilter.length > 0 || apmFilter.length > 0 || paFilter.length > 0;
   const toggleSim  = name => setExpandedAdvisor(v => v===name ? null : name);
 
   const donutData = [
@@ -190,7 +195,7 @@ export default function IncentiveIntelligence() {
     <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
       {/* Filters */}
       <div className="card" style={{ padding:'10px 14px' }}>
-        <div className="filter-bar" style={{ marginBottom:0 }}>
+        <div className="filter-bar" style={{alignItems:"center"}} style={{ marginBottom:0 }}>
           <MultiSelect label="TL"  options={uniqueTLs}  value={tlFilter}  onChange={setTlFilter} />
           <MultiSelect label="APM" options={uniqueAPMs} value={apmFilter} onChange={setApmFilter} />
           <MultiSelect label="PA"  options={uniquePAs}  value={paFilter}  onChange={setPaFilter} searchable />

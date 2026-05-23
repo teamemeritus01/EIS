@@ -65,11 +65,17 @@ export default function DeadHoursIntelligence() {
       .filter(([, d]) => d.dials >= EFFORT_RULES.minDialsForProductiveDay) // >= 20 dials only
       .map(([name, d]) => {
         const meta      = d.meta;
-        const hourKeys  = [...d.hours.keys()].map(Number);
-        const firstHour = Math.min(...hourKeys);
-        const lastHour  = Math.max(...hourKeys);
-        const window    = [];
-        for (let h = firstHour; h <= lastHour; h++) window.push(h);
+        const hourKeys = [...d.hours.keys()].map(Number);
+        // Use shift window from region (ROW: 10AM-9PM, US: 6PM-9AM)
+        const region = meta.region || 'ROW';
+        let window;
+        if (region === 'US') {
+          window = [...Array.from({length:6},(_,i)=>18+i), ...Array.from({length:10},(_,i)=>i)];
+        } else {
+          window = Array.from({length:12},(_,i)=>10+i);
+        }
+        const firstHour = Math.min(...window);
+        const lastHour  = Math.max(...window);
         const active = window.filter(h => d.hours.has(h));
         const dead   = window.filter(h => !d.hours.has(h));
         const deadPct = window.length > 0 ? dead.length / window.length : 0;
@@ -169,7 +175,7 @@ export default function DeadHoursIntelligence() {
       <div className="card" style={{ padding: 0 }}>
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontWeight: 700, fontSize: 13 }}>Dead Hours Analysis</span>
-          <span className="badge badge-gray" style={{ fontSize: 10 }}>Window = First call → Last call per advisor</span>
+          <span className="badge badge-gray" style={{ fontSize: 10 }}>Window = Shift window (ROW: 10AM–10PM · US: 6PM–10AM)</span>
           <button className="btn btn-ghost btn-sm" onClick={() => setExpandedPAs(new Set(deadData.map(r => r.name)))} style={{ marginLeft: 'auto' }}>Expand All</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setExpandedPAs(new Set())}>Collapse All</button>
         </div>

@@ -13,8 +13,6 @@ const NAV = [
   { id:'atrisk',        label:'At-Risk Tracker',        icon:'⚠',  roles:['admin','director','tl','apm'] },
   { section: 'EFFORT INTELLIGENCE' },
   { id:'effort',        label:'Effort Intelligence',    icon:'📞', roles:['admin','director','tl','apm'] },
-  { id:'heatmap',       label:'Heatmap Intelligence',   icon:'🔥', roles:['admin','director','tl','apm'] },
-  { id:'deadhours',     label:'Dead Hours',             icon:'💤', roles:['admin','director','tl','apm'] },
   { id:'shiftsplit',    label:'Shift Split Analytics',  icon:'📊', roles:['admin','director','tl'] },
   { section: 'ATTENDANCE' },
   { id:'attendance',    label:'Attendance Intelligence',icon:'✅', roles:['admin','director','tl','apm'] },

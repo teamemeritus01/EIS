@@ -7,6 +7,8 @@ import { useApp } from '../../store/appStore.jsx';
 import { parseBSCWorkbook } from '../../parsers/bscParser.js';
 import { parseEffortCSV } from '../../parsers/effortParser.js';
 import { parseAttendanceFile } from '../../parsers/attendanceParser.js';
+import { parseCompensationPDF, compensationToConfig } from '../../parsers/compensationParser.js';
+import { saveQuarterlyConfig, loadQuarterlyConfig } from '../../constants/businessRules.js';
 
 // ── File type auto-detection ──────────────────────────────
 function detectFileType(file) {
@@ -107,10 +109,24 @@ export default function UploadCenter() {
         notify(`Attendance loaded — ${data.advisors.length} advisors`, 'success');
       }
       else if (type === 'comp') {
-        // PDF parsing is complex; mark as acknowledged
-        setStatus('comp', 'success');
-        setInfo('comp', { Status: 'Comp rules loaded from built-in FY26 Q4 config' });
-        notify('Compensation PDF acknowledged — FY26 Q4 rules active', 'info');
+        const parsed = await parseCompensationPDF(file);
+        if (parsed.isValid) {
+          const config = compensationToConfig(parsed);
+          const existing = loadQuarterlyConfig();
+          saveQuarterlyConfig({ ...existing, ...config });
+          setStatus('comp', 'success');
+          setInfo('comp', {
+            'Slabs extracted': parsed.slabs.length,
+            'Metrics found':   parsed.metrics.length,
+            'Gating criteria': Object.keys(parsed.gating).length,
+            'Confidence':      Math.round(parsed.confidence * 100) + '%',
+          });
+          notify(`✓ Incentive structure loaded — ${parsed.slabs.length} slabs extracted. Quarterly Config updated.`, 'success');
+        } else {
+          setStatus('comp', 'success');
+          setInfo('comp', { Status: 'FY26 Q4 built-in rules active (PDF structure not recognised)' });
+          notify('PDF uploaded — structure not fully parsed. Using built-in FY26 Q4 config. Check Quarterly Config to edit manually.', 'info');
+        }
       }
     } catch (e) {
       setStatus(type, 'error');

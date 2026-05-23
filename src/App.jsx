@@ -11,8 +11,6 @@ import L7DTrend from './components/pages/L7DTrend.jsx';
 import ScenarioEngine from './components/pages/ScenarioEngine.jsx';
 import AtRiskTracker from './components/pages/AtRiskTracker.jsx';
 import EffortIntelligence from './components/pages/EffortIntelligence.jsx';
-import HeatmapIntelligence from './components/pages/HeatmapIntelligence.jsx';
-import DeadHoursIntelligence from './components/pages/DeadHoursIntelligence.jsx';
 import ShiftSplitAnalytics from './components/pages/ShiftSplitAnalytics.jsx';
 import AttendanceIntelligence from './components/pages/AttendanceIntelligence.jsx';
 import AbsenceManager from './components/pages/AbsenceManager.jsx';
@@ -50,8 +48,6 @@ function PlatformShell() {
       case 'scenario':       return <ScenarioEngine/>;
       case 'atrisk':         return <AtRiskTracker/>;
       case 'effort':         return <EffortIntelligence/>;
-      case 'heatmap':        return <HeatmapIntelligence/>;
-      case 'deadhours':      return <DeadHoursIntelligence/>;
       case 'shiftsplit':     return <ShiftSplitAnalytics/>;
       case 'attendance':     return <AttendanceIntelligence/>;
       case 'absence':        return <AbsenceManager/>;

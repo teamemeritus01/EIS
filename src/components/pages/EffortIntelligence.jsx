@@ -103,6 +103,7 @@ export default function EffortIntelligence() {
     dials:summaries.reduce((s,r)=>s+r.totalDials,0),
     conn: summaries.reduce((s,r)=>s+r.totalConn,0),
     tt:   summaries.reduce((s,r)=>s+r.totalTT,0),
+    ptt:  summaries.reduce((s,r)=>s+r.totalPTT,0),
   }),[summaries]);
 
   const handleSort = k => { if(sortKey===k) setSortDir(d=>d==='asc'?'desc':'asc'); else{setSortKey(k);setSortDir('desc');} };
@@ -279,8 +280,8 @@ export default function EffortIntelligence() {
               <tr>
                 {[['name','Advisor',true],['tl','TL',true],['apm','APM',true],
                   ['totalDials','Total Calls'],['totalConn','Connected'],
-                  ['totalTT','Talk Time (min)'],['connRate','Conn Rate %'],
-                  ['avgTalkPerConnect','Avg Talk/Connect'],['score','Effort Score']].map(([k,l,left])=>(
+                  ['totalPTT','PTT (min)'],['totalTT','Total TT (min)'],['connRate','Conn Rate %'],
+                  ['avgTalkPerConnect','Avg PTT/Connect'],['score','Effort Score']].map(([k,l,left])=>(
                   <th key={k} onClick={()=>handleSort(k)} style={{textAlign:left?'left':'center',cursor:'pointer'}}>
                     {l} {sortKey===k?(sortDir==='desc'?'↓':'↑'):''}
                   </th>
@@ -299,9 +300,10 @@ export default function EffortIntelligence() {
                   <td style={{textAlign:'left',fontSize:11}}>{r.apm||'—'}</td>
                   <td>{r.totalDials.toLocaleString()}</td>
                   <td>{r.totalConn}</td>
-                  <td>{r.totalTT.toFixed(2)}</td>
+                  <td style={{fontWeight:700,color:'var(--brand-d)'}}>{r.totalPTT.toFixed(2)}</td>
+                  <td style={{color:'var(--txt3)'}}>{r.totalTT.toFixed(2)}</td>
                   <td>{(r.connRate*100).toFixed(2)}%</td>
-                  <td>{r.avgTalkPerConnect.toFixed(2)}</td>
+                  <td>{r.totalConn>0?(r.totalPTT/r.totalConn).toFixed(2):'—'}</td>
                   <td>
                     <div style={{display:'flex',alignItems:'center',gap:5}}>
                       <div style={{width:40,height:6,background:'var(--s200)',borderRadius:3,overflow:'hidden'}}>
@@ -323,9 +325,10 @@ export default function EffortIntelligence() {
                 <td colSpan={3} style={{textAlign:'left'}}>Grand Total ({summaries.length})</td>
                 <td>{totals.dials.toLocaleString()}</td>
                 <td>{totals.conn.toLocaleString()}</td>
+                <td style={{fontWeight:700}}>{totals.ptt.toFixed(2)}</td>
                 <td>{totals.tt.toFixed(2)}</td>
                 <td>{totals.dials>0?(totals.conn/totals.dials*100).toFixed(2)+'%':'—'}</td>
-                <td>{totals.conn>0?(totals.tt/totals.conn).toFixed(2):'—'}</td>
+                <td>{totals.conn>0?(totals.ptt/totals.conn).toFixed(2):'—'}</td>
                 <td colSpan={2}/>
               </tr>
             </tfoot>

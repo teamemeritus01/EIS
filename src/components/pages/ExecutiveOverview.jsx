@@ -307,7 +307,7 @@ function MiniD1({ d1Data, bscAdvisors }) {
 function MiniScenario({ advisors, setTab }) {
   const [selAdv, setSelAdv] = useState('');
   const advisor = advisors.find(a=>a.name===selAdv);
-  const sc = advisor ? generateScenarios(advisor, advisors.length) : null;
+  const sc = advisor ? (()=>{try{return generateScenarios(advisor, advisors.length)}catch(e){return null}})() : null;
   const best = sc?.scenarios[2]; // balanced
 
   return (

@@ -4,6 +4,19 @@ import { generateScenarios } from '../../engines/scenarioEngine.js';
 import { formatINR } from '../../constants/businessRules.js';
 import MultiSelect from '../shared/MultiSelect.jsx';
 
+// Safe scenario generator — never crashes on bad data
+function safeGenerateScenarios(advisor, total, l7d) {
+  try {
+    if (!advisor || !advisor.name) return null;
+    const result = safeGenerateScenarios(advisor, total, l7d);
+    if (!result || !result.scenarios || !Array.isArray(result.scenarios)) return null;
+    return result;
+  } catch(e) {
+    console.warn('Scenario generation failed:', e.message);
+    return null;
+  }
+}
+
 export default function ScenarioEngine() {
   const { state } = useApp();
   const { bscData } = state;

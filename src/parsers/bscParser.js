@@ -279,7 +279,7 @@ function parseD1Sheet(wb) {
     const row = rows[i];
     if (!row || !row[0]) continue;
     const cell0 = String(row[0]).trim();
-    if (cell0 === 'OR' || cell0 === 'TL' || cell0 === 'PA') { mode = cell0; continue; }
+    if (['OR','TL','APM','PA'].includes(cell0)) { mode = cell0; continue; }
     if (!row[1] && !row[6]) continue;
 
     const bscRaw = safeNum(row[14]);

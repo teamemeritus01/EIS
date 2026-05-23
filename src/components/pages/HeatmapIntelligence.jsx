@@ -74,15 +74,22 @@ export default function HeatmapIntelligence() {
       .map(([name, d]) => {
         const meta      = d.meta;
         const hourKeys  = Object.keys(d.hours).map(Number);
-        const firstHour = Math.min(...hourKeys);
-        const lastHour  = Math.max(...hourKeys);
-        // Dead hours = hours in window [first, last] where calls === 0
-        const windowHours = [];
-        for (let h = firstHour; h <= lastHour; h++) windowHours.push(h);
-        const activeHours = hourKeys.filter(h => h >= firstHour && h <= lastHour);
-        const deadHours   = windowHours.filter(h => !activeHours.includes(h));
+        // Determine shift window from region (ROW: 10AM-10PM, US: 6PM-10AM)
+        const region = meta.region || 'ROW';
+        let windowHours;
+        if (region === 'US') {
+          // US shift: 18:00 → 09:00 (wraps midnight)
+          windowHours = [...Array.from({length:6},(_,i)=>18+i), ...Array.from({length:10},(_,i)=>i)];
+        } else {
+          // ROW shift: 10:00 → 21:00
+          windowHours = Array.from({length:12},(_,i)=>10+i);
+        }
+        const activeHours = hourKeys.filter(h => windowHours.includes(h));
+        const deadHours   = windowHours.filter(h => !hourKeys.includes(h));
         const deadPct     = windowHours.length > 0 ? deadHours.length / windowHours.length : 0;
-        return { name, tl: meta.tl, apm: meta.apm, region: meta.region,
+        const firstHour   = Math.min(...windowHours);
+        const lastHour    = Math.max(...windowHours);
+        return { name, tl: meta.tl, apm: meta.apm, region,
           totalDials: d.dials, firstHour, lastHour, windowHours, activeHours, deadHours,
           deadPct, hours: d.hours };
       });

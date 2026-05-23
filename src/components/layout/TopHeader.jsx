@@ -13,8 +13,6 @@ const PAGE_EXPORT_CONFIG = {
   l7d:           { label:'Export L7D Trend', formats:['csv'] },
   scenario:      { label:'Export Scenarios', formats:['pdf'] },
   atrisk:        { label:'Export At-Risk List', formats:['excel','csv'] },
-  heatmap:       { label:'Export Heatmap', formats:['csv'] },
-  deadhours:     { label:'Export Dead Hours', formats:['csv'] },
   attendance:    { label:'Export Attendance', formats:['excel','csv'] },
   tl:            { label:'Export TL Report', formats:['excel','pdf'] },
   export:        null,
@@ -49,7 +47,16 @@ export default function TopHeader({ sidebarCollapsed, onMobileToggle }) {
   }, []);
 
   useEffect(() => {
-    const tick = setInterval(() => setNow(new Date()), 1000);
+    const tick = setInterval(() => {
+      const n = new Date();
+      setNow(n);
+      // Auto-update operational day at exactly 10:00 AM (crossover)
+      // Check every minute boundary
+      if (n.getSeconds() === 0 && n.getMinutes() === 0 && n.getHours() === 10) {
+        const newOpDay = getCurrentOperationalDay();
+        setOpDay(newOpDay);
+      }
+    }, 1000);
     return () => clearInterval(tick);
   }, []);
 

@@ -1,70 +1,157 @@
 // ============================================================
 // RECONCILIATION CENTER
-// Enterprise-grade future-timestamp anomaly management
-// Implements: Detection → Queue → Manual Approval → Memory → Suppression
+// Future-timestamp anomaly management with manual shift override
+// Admin can reassign any call to any shift date of their choice
 // ============================================================
 import { useState, useMemo } from 'react';
 import { useApp } from '../../store/appStore.jsx';
-import { getReconciliationStats, clearReconciliationMemory } from '../../parsers/effortParser.js';
+import { getShiftDates } from '../../parsers/effortParser.js';
+import { formatShiftDate, toDDMMYYYY } from '../../utils/dateUtils.js';
 
-const STATUS_COLORS = { approved:'badge-green', suppressed:'badge-gray', ignored:'badge-yellow', pending:'badge-orange' };
+const STATUS_COLORS = {
+  approved:  { bg:'#dcfce7', color:'#166534' },
+  suppressed:{ bg:'#f1f5f9', color:'#475569' },
+  ignored:   { bg:'#fef9c3', color:'#854d0e' },
+};
 
-function AnomalyRow({ item, onApprove, onIgnore, onSuppress }) {
-  const [expanded, setExpanded] = useState(false);
-  const suspected = item.shiftDate || 'Previous operational day';
+function AnomalyCard({ item, effortRows, onApprove, onIgnore, onSuppress }) {
+  const [expanded, setExpanded]         = useState(false);
+  const [showOverride, setShowOverride] = useState(false);
+  const [targetShift, setTargetShift]   = useState(item.shiftDate || '');
+
+  // Available shift dates from effort data + allow typing a custom date
+  const availableShifts = useMemo(() => getShiftDates(effortRows || []), [effortRows]);
+
+  const calculatedShift = item.shiftDate || '—';
+  const isOverriding    = targetShift && targetShift !== calculatedShift;
+  const hour            = parseInt(item.hour, 10);
+
+  const explanation = hour < 10
+    ? `This call was logged at ${hour}:00 on ${item.date} (cross-midnight, before 10 AM cutoff). Under the 10 AM operational-day rule, it belongs to the previous day's shift. Due to a Salesforce/RingDNA sync delay, it appeared in a later upload — creating a future-timestamp anomaly.`
+    : `This call was logged at ${hour}:00 on ${item.date}. Since Hour ${hour} ≥ 10 AM, the 10 AM rule maps it to the same day (shift ${calculatedShift}). However, at the time of upload, this timestamp was ahead of the current system time — indicating a Salesforce/RingDNA sync anomaly. You can approve it to the calculated shift (${calculatedShift}) or override it to any other shift date.`;
+
   return (
-    <div style={{ border:'1px solid #fdba74', borderRadius:10, marginBottom:10, overflow:'hidden' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px', background:'#fff7ed', cursor:'pointer' }} onClick={()=>setExpanded(!expanded)}>
-        <div style={{ width:8, height:8, borderRadius:'50%', background:'#f97316', flexShrink:0 }} />
+    <div style={{ border:`1.5px solid ${isOverriding ? '#3b82f6' : '#fdba74'}`, borderRadius:10, marginBottom:10, overflow:'hidden',
+      transition:'border-color 0.2s' }}>
+
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
+        background: isOverriding ? '#eff6ff' : '#fff7ed', cursor:'pointer' }}
+        onClick={() => setExpanded(!expanded)}>
+        <div style={{ width:8, height:8, borderRadius:'50%', background: isOverriding ? '#3b82f6' : '#f97316', flexShrink:0 }} />
         <div style={{ flex:1 }}>
           <div style={{ fontWeight:700, fontSize:13 }}>{item.advisor}</div>
           <div style={{ fontSize:11, color:'#9a3412' }}>
-            Created: {item.date} · Hour: {item.hour}:00 · Duration: {item.duration?.toFixed(2)} min · {item.connected?'Connected':'Not Connected'}
+            Created: {item.date} · Hour: {hour}:00 · Duration: {item.duration?.toFixed(2)} min · {item.connected ? 'Connected' : 'Not Connected'}
           </div>
         </div>
         <div style={{ textAlign:'right', fontSize:11 }}>
-          <div style={{ fontWeight:600, color:'#9a3412' }}>Future timestamp detected</div>
-          <div style={{ color:'var(--text-muted)' }}>Suspected day: {suspected}</div>
+          <div style={{ fontWeight:600, color: isOverriding ? '#1e40af' : '#9a3412' }}>
+            {isOverriding ? `⚡ Override → ${targetShift}` : 'Future timestamp detected'}
+          </div>
+          <div style={{ color:'var(--txt3)' }}>Calculated shift: {calculatedShift}</div>
         </div>
-        <span style={{ fontSize:12, color:'var(--text-muted)' }}>{expanded?'▲':'▼'}</span>
+        <span style={{ fontSize:12, color:'var(--txt3)' }}>{expanded ? '▲' : '▼'}</span>
       </div>
+
+      {/* Expanded Detail */}
       {expanded && (
-        <div style={{ padding:'14px 16px', background:'white', borderTop:'1px solid #fdba74' }}>
+        <div style={{ padding:'16px', background:'white', borderTop:`1px solid ${isOverriding ? '#bfdbfe' : '#fdba74'}` }}>
+
+          {/* Call detail grid */}
           <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, marginBottom:14 }}>
             {[
-              { label:'Advisor', value:item.advisor },
-              { label:'Call Date (Raw)', value:item.date },
-              { label:'Hour of Day', value:`${item.hour}:00` },
-              { label:'Duration', value:`${item.duration?.toFixed(2)} min` },
-              { label:'Connected', value:item.connected?'Yes':'No' },
-              { label:'Call Type', value:item.callType||'Calls' },
-              { label:'Detected At', value:new Date(item.detectedAt).toLocaleString('en-IN') },
-              { label:'Suspected Shift Date', value:suspected },
-            ].map(f=>(
+              { label:'Advisor',           value: item.advisor },
+              { label:'Call Date (Raw)',    value: item.date },
+              { label:'Hour of Day',        value: `${hour}:00` },
+              { label:'Duration',           value: `${item.duration?.toFixed(2)} min` },
+              { label:'Connected',          value: item.connected ? 'Yes' : 'No' },
+              { label:'Call Type',          value: item.callType || 'Calls' },
+              { label:'Detected At',        value: item.detectedAt ? new Date(item.detectedAt).toLocaleString('en-IN') : '—' },
+              { label:'Calculated Shift',   value: calculatedShift },
+            ].map(f => (
               <div key={f.label} style={{ background:'#f8fafc', borderRadius:6, padding:'8px 10px' }}>
-                <div style={{ fontSize:10, color:'var(--text-muted)', textTransform:'uppercase', marginBottom:2 }}>{f.label}</div>
+                <div style={{ fontSize:10, color:'var(--txt3)', textTransform:'uppercase', marginBottom:2 }}>{f.label}</div>
                 <div style={{ fontWeight:700, fontSize:12 }}>{f.value}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ background:'#fef9c3', borderRadius:8, padding:'10px 14px', fontSize:12, marginBottom:14, border:'1px solid #fde047' }}>
-            <strong>What happened:</strong> This call was logged at {item.hour}:00 on {item.date}, which falls after midnight and before 10 AM.
-            Under the operational-day rule (10 AM → 10 AM), it belongs to the <strong>previous shift's</strong> window.
-            Due to Salesforce/RingDNA sync delays, it appeared in a later upload — creating a future-timestamp anomaly.
+          {/* Explanation */}
+          <div style={{ background:'#fef9c3', borderRadius:8, padding:'10px 14px', fontSize:12, marginBottom:14, border:'1px solid #fde047', lineHeight:1.6 }}>
+            <strong>What happened:</strong> {explanation}
           </div>
 
-          <div style={{ display:'flex', gap:10 }}>
-            <button className="btn btn-primary" onClick={()=>onApprove(item)} style={{ background:'#166534' }}>
-              ✓ Approve Reassignment to {suspected}
+          {/* Manual shift override section */}
+          <div style={{ background: isOverriding ? '#eff6ff' : '#f8fafc', borderRadius:8, padding:'12px 14px',
+            marginBottom:14, border:`1px solid ${isOverriding ? '#bfdbfe' : 'var(--border)'}` }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+              <span style={{ fontSize:12, fontWeight:700, color:'var(--txt2)' }}>📅 Target Shift Date:</span>
+
+              {/* Quick select from available shifts */}
+              <select
+                className="filter-select"
+                value={targetShift}
+                onChange={e => setTargetShift(e.target.value)}
+                style={{ fontSize:12 }}>
+                <option value={calculatedShift}>
+                  {formatShiftDate(calculatedShift)} — Calculated (default)
+                </option>
+                {availableShifts.filter(d => d !== calculatedShift).reverse().map(d => (
+                  <option key={d} value={d}>{formatShiftDate(d)}</option>
+                ))}
+              </select>
+
+              {isOverriding && (
+                <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                  <span style={{ fontSize:11, color:'#1e40af', fontWeight:600 }}>
+                    ⚡ Will be moved to: <strong>{targetShift}</strong> (not {calculatedShift})
+                  </span>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize:10 }}
+                    onClick={() => setTargetShift(calculatedShift)}>
+                    ↩ Reset to calculated
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {isOverriding && (
+              <div style={{ marginTop:8, fontSize:11, color:'#1e40af', background:'#dbeafe', borderRadius:6, padding:'6px 10px' }}>
+                ℹ This call will be <strong>added to {targetShift} shift</strong> calculations and <strong>excluded from {calculatedShift} shift</strong>. Audit trail will record the override.
+              </div>
+            )}
+          </div>
+
+          {/* Action buttons */}
+          <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => onApprove(item, targetShift)}
+              style={{ background: isOverriding ? '#1d4ed8' : '#166534' }}>
+              ✓ {isOverriding
+                ? `Approve & Move to ${targetShift}`
+                : `Approve Reassignment to ${calculatedShift}`}
             </button>
-            <button className="btn btn-outline" onClick={()=>onIgnore(item)} style={{ borderColor:'#eab308', color:'#854d0e' }}>
+            <button className="btn btn-outline" onClick={() => onIgnore(item)}
+              style={{ borderColor:'#eab308', color:'#854d0e' }}>
               ~ Ignore (keep original timestamp)
             </button>
-            <button className="btn btn-danger" onClick={()=>onSuppress(item)}>
-              ✕ Suppress Row (exclude from calculations)
+            <button className="btn btn-danger" onClick={() => onSuppress(item)}>
+              ✕ Suppress Row (exclude from all calculations)
             </button>
           </div>
+
+          {/* PTT impact note */}
+          {item.connected && item.duration > 1.5 && (
+            <div style={{ marginTop:10, fontSize:11, color:'#166534', background:'#f0fdf4', padding:'6px 10px', borderRadius:6 }}>
+              ✓ This call qualifies for PTT ({item.duration?.toFixed(2)} min, connected). Will contribute to PTT in the target shift.
+            </div>
+          )}
+          {!item.connected && (
+            <div style={{ marginTop:10, fontSize:11, color:'#475569', background:'#f8fafc', padding:'6px 10px', borderRadius:6 }}>
+              ℹ Not connected — will count as a dial only (no PTT impact regardless of shift).
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -72,29 +159,30 @@ function AnomalyRow({ item, onApprove, onIgnore, onSuppress }) {
 }
 
 export default function ReconciliationCenter() {
-  const { state, approveRecon, ignoreRecon, suppressRecon, notify, dispatch } = useApp();
-  const { reconciliationQueue = [], reconciliationApproved = [] } = state;
-  const [memStats, setMemStats] = useState(() => { try { return getReconciliationStats(); } catch { return { count:0, sizeKB:0 }; } });
+  const { state, approveRecon, ignoreRecon, suppressRecon, notify } = useApp();
+  const { reconciliationQueue = [], reconciliationApproved = [], effortData, auth } = state;
   const [activeTab, setActiveTab] = useState('queue');
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all'); // 'all' | 'approved' | 'suppressed' | 'ignored'
+  const [search,    setSearch]    = useState('');
+  const [filter,    setFilter]    = useState('all');
 
-  const handleApprove = (item) => {
-    approveRecon(item.sig, item);
-    notify(`✓ Reassigned: ${item.advisor}'s call on ${item.date} → ${item.shiftDate||'prev shift'}`, 'success');
-  };
-  const handleIgnore  = (item) => { ignoreRecon(item.sig, item); notify(`Ignored anomaly for ${item.advisor}`, 'info'); };
-  const handleSuppress= (item) => { suppressRecon(item.sig, item); notify(`Suppressed row for ${item.advisor} — excluded from calculations`, 'info'); };
+  const effortRows = effortData?.rows || [];
 
-  const handleClearMemory = () => {
-    clearReconciliationMemory();
-    setMemStats({ count:0, sizeKB:0 });
-    notify('Reconciliation memory cleared. Next upload will reprocess all rows.', 'info');
+  const handleApprove = (item, targetShiftDate) => {
+    approveRecon(item.sig, item, targetShiftDate);
+    const moved = targetShiftDate && targetShiftDate !== item.shiftDate;
+    notify(
+      moved
+        ? `✓ ${item.advisor}'s call moved to ${targetShiftDate} (overridden from ${item.shiftDate})`
+        : `✓ ${item.advisor}'s call approved → ${targetShiftDate || item.shiftDate}`,
+      'success'
+    );
   };
+
+  const handleIgnore   = (item) => { ignoreRecon(item.sig, item);   notify(`Ignored anomaly for ${item.advisor}`, 'info'); };
+  const handleSuppress = (item) => { suppressRecon(item.sig, item); notify(`Suppressed row for ${item.advisor} — excluded from all calculations`, 'info'); };
 
   const approveAll = () => {
-    reconciliationQueue.forEach(item => approveRecon(item.sig, item));
-    notify(`✓ All ${reconciliationQueue.length} anomalies approved and reassigned`, 'success');
+    reconciliationQueue.forEach(item => handleApprove(item, item.shiftDate));
   };
   const suppressAll = () => {
     reconciliationQueue.forEach(item => suppressRecon(item.sig, item));
@@ -102,223 +190,157 @@ export default function ReconciliationCenter() {
   };
 
   const filteredResolved = useMemo(() => {
-    let list = reconciliationApproved;
+    let list = [...reconciliationApproved].reverse();
     if (filter !== 'all') list = list.filter(r => r.status === filter);
     if (search) list = list.filter(r => r.advisor?.toLowerCase().includes(search.toLowerCase()));
     return list;
   }, [reconciliationApproved, filter, search]);
 
-  const stats = useMemo(() => ({
-    pending:   reconciliationQueue.length,
-    approved:  reconciliationApproved.filter(r=>r.status==='approved').length,
-    suppressed:reconciliationApproved.filter(r=>r.status==='suppressed').length,
-    ignored:   reconciliationApproved.filter(r=>r.status==='ignored').length,
-  }), [reconciliationQueue, reconciliationApproved]);
+  const stats = {
+    pending:    reconciliationQueue.length,
+    approved:   reconciliationApproved.filter(r => r.status === 'approved').length,
+    suppressed: reconciliationApproved.filter(r => r.status === 'suppressed').length,
+    ignored:    reconciliationApproved.filter(r => r.status === 'ignored').length,
+  };
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-
-      {/* Architecture explanation card */}
-      <div className="card" style={{ background:'linear-gradient(135deg,#0f172a,#1e3a5f)', color:'white', border:'none' }}>
-        <div style={{ display:'flex', gap:20, alignItems:'flex-start' }}>
-          <div style={{ fontSize:40 }}>🔄</div>
-          <div style={{ flex:1 }}>
-            <div style={{ fontWeight:800, fontSize:16, marginBottom:6 }}>Reconciliation Engine — Enterprise Telemetry Integrity</div>
-            <div style={{ fontSize:12, opacity:.85, lineHeight:1.8 }}>
-              Raw effort telemetry from Salesforce/RingDNA contains real-world timing inconsistencies — calls made at 11 PM appear in next-day uploads due to sync delays.
-              This engine detects future-timestamp anomalies, queues them for manual review, and maintains reconciliation memory to prevent double-counting across cumulative uploads.
-              <strong style={{ color:'#4ade80' }}> Raw telemetry is never modified — only interpreted.</strong>
-            </div>
-          </div>
-          <div style={{ display:'flex', flexDirection:'column', gap:6, minWidth:160 }}>
-            {[
-              ['Detect', 'Timestamp drift detection'],
-              ['Queue', 'Manual review required'],
-              ['Approve', 'Reassign to correct shift'],
-              ['Memory', 'Suppress future duplicates'],
-            ].map(([step,desc],i)=>(
-              <div key={step} style={{ display:'flex', alignItems:'center', gap:8, background:'rgba(255,255,255,.08)', borderRadius:6, padding:'6px 10px' }}>
-                <div style={{ width:20, height:20, borderRadius:'50%', background:'#166534', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:800, flexShrink:0 }}>{i+1}</div>
-                <div>
-                  <div style={{ fontWeight:700, fontSize:11 }}>{step}</div>
-                  <div style={{ fontSize:10, opacity:.7 }}>{desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
 
       {/* Stats */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:12 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12 }}>
         {[
-          { label:'Pending Review', value:stats.pending,    accent:'#f97316', alert:stats.pending>0 },
-          { label:'Approved',       value:stats.approved,   accent:'#166534' },
-          { label:'Suppressed',     value:stats.suppressed, accent:'#6b7280' },
-          { label:'Ignored',        value:stats.ignored,    accent:'#eab308' },
-          { label:'Memory Records', value:memStats.count+` (${memStats.sizeKB}KB)`, accent:'#6366f1' },
-        ].map(s=>(
-          <div key={s.label} className="stat-card" style={{ border:s.alert?'2px solid #fdba74':undefined }}>
+          { label:'Pending Review', value:stats.pending,    accent:'#f97316', bg:'#fff7ed' },
+          { label:'Approved',       value:stats.approved,   accent:'#16a34a', bg:'#f0fdf4' },
+          { label:'Suppressed',     value:stats.suppressed, accent:'#64748b', bg:'#f8fafc' },
+          { label:'Ignored',        value:stats.ignored,    accent:'#eab308', bg:'#fefce8' },
+        ].map(s => (
+          <div key={s.label} className="stat-card" style={{ background:s.bg }}>
             <div className="stat-accent" style={{ background:s.accent }} />
             <div className="stat-label">{s.label}</div>
-            <div className="stat-value" style={{ fontSize:s.alert?28:22, color:s.alert?'#9a3412':undefined }}>{s.value}</div>
+            <div className="stat-value" style={{ fontSize:28, color:s.accent }}>{s.value}</div>
           </div>
         ))}
       </div>
 
-      {/* Tab strip */}
+      {/* Tabs */}
       <div className="tab-strip">
-        <div className={`tab-pill ${activeTab==='queue'?'active':''}`} onClick={()=>setActiveTab('queue')}>
-          Pending Queue {stats.pending>0&&<span className="badge badge-orange" style={{ marginLeft:6 }}>{stats.pending}</span>}
+        <div className={`tab-pill ${activeTab === 'queue' ? 'active' : ''}`} onClick={() => setActiveTab('queue')}>
+          🔄 Pending Queue {stats.pending > 0 && <span style={{ background:'#f97316', color:'white', borderRadius:10, padding:'1px 6px', fontSize:10, marginLeft:6 }}>{stats.pending}</span>}
         </div>
-        <div className={`tab-pill ${activeTab==='resolved'?'active':''}`} onClick={()=>setActiveTab('resolved')}>
-          Resolved History ({reconciliationApproved.length})
-        </div>
-        <div className={`tab-pill ${activeTab==='memory'?'active':''}`} onClick={()=>setActiveTab('memory')}>
-          Reconciliation Memory
+        <div className={`tab-pill ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
+          📋 Audit History ({stats.approved + stats.suppressed + stats.ignored})
         </div>
       </div>
 
-      {/* Queue tab */}
+      {/* QUEUE TAB */}
       {activeTab === 'queue' && (
         <div>
+          {reconciliationQueue.length > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14, padding:'10px 14px',
+              background:'#fff7ed', borderRadius:8, border:'1px solid #fdba74' }}>
+              <span style={{ fontSize:12, fontWeight:700, color:'#9a3412', flex:1 }}>
+                ⚠ {reconciliationQueue.length} row(s) require your review before operational data is considered stable
+              </span>
+              <button className="btn btn-primary btn-sm" onClick={approveAll} style={{ background:'#166534', fontSize:11 }}>
+                ✓ Approve All ({stats.pending}) to calculated shifts
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={suppressAll} style={{ fontSize:11 }}>
+                ✕ Suppress All
+              </button>
+            </div>
+          )}
+
           {reconciliationQueue.length === 0 ? (
-            <div className="card" style={{ textAlign:'center', padding:'60px 24px' }}>
-              <div style={{ fontSize:48, marginBottom:16 }}>✅</div>
-              <h3 style={{ fontSize:18, fontWeight:800, marginBottom:8 }}>No Pending Anomalies</h3>
-              <p style={{ color:'var(--text-muted)', fontSize:13 }}>
-                All uploaded effort data has clean timestamps. No future-timestamp anomalies detected.<br/>
-                Upload a Raw Effort CSV to check for anomalies.
-              </p>
+            <div className="empty-state card">
+              <div style={{ fontSize:48 }}>✅</div>
+              <h3>Queue is clear</h3>
+              <p>No anomalies pending review. All operational data is stable.</p>
             </div>
           ) : (
-            <>
-              <div style={{ display:'flex', gap:10, marginBottom:14, alignItems:'center' }}>
-                <div style={{ flex:1, fontSize:13, color:'#9a3412', fontWeight:600 }}>
-                  ⚠ {reconciliationQueue.length} row(s) require your review before operational data is considered stable
-                </div>
-                <button className="btn btn-primary" onClick={approveAll} style={{ background:'#166534' }}>
-                  ✓ Approve All ({reconciliationQueue.length})
-                </button>
-                <button className="btn btn-danger" onClick={suppressAll}>
-                  ✕ Suppress All
-                </button>
-              </div>
-              {reconciliationQueue.map(item => (
-                <AnomalyRow key={item.sig} item={item} onApprove={handleApprove} onIgnore={handleIgnore} onSuppress={handleSuppress} />
-              ))}
-            </>
+            reconciliationQueue.map(item => (
+              <AnomalyCard
+                key={item.sig}
+                item={item}
+                effortRows={effortRows}
+                onApprove={handleApprove}
+                onIgnore={handleIgnore}
+                onSuppress={handleSuppress}
+              />
+            ))
           )}
         </div>
       )}
 
-      {/* Resolved tab */}
-      {activeTab === 'resolved' && (
-        <div>
-          <div style={{ display:'flex', gap:10, marginBottom:14, alignItems:'center' }}>
-            <input className="search-input" placeholder="Search advisor..." value={search} onChange={e=>setSearch(e.target.value)} />
-            <select className="filter-select" value={filter} onChange={e=>setFilter(e.target.value)}>
-              <option value="all">All Statuses</option>
-              <option value="approved">Approved</option>
-              <option value="suppressed">Suppressed</option>
-              <option value="ignored">Ignored</option>
-            </select>
-            <span style={{ marginLeft:'auto', fontSize:12, color:'var(--text-muted)' }}>{filteredResolved.length} records</span>
+      {/* AUDIT HISTORY TAB */}
+      {activeTab === 'history' && (
+        <div className="card" style={{ padding:0 }}>
+          <div style={{ padding:'12px 16px', borderBottom:'1px solid var(--border)', display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
+            <input className="search-input" placeholder="Search advisor..." value={search}
+              onChange={e => setSearch(e.target.value)} style={{ width:180 }} />
+            {['all','approved','suppressed','ignored'].map(f => (
+              <button key={f} className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setFilter(f)} style={{ fontSize:11, textTransform:'capitalize' }}>
+                {f}
+              </button>
+            ))}
+            <span style={{ marginLeft:'auto', fontSize:11, color:'var(--txt3)' }}>
+              {filteredResolved.length} records
+            </span>
           </div>
+
           {filteredResolved.length === 0 ? (
-            <div className="empty-state"><div>📋</div><h3>No Resolved Records</h3><p>Resolved anomalies appear here after review.</p></div>
+            <div className="empty-state" style={{ padding:40 }}>
+              <div>📋</div><h3>No audit records</h3>
+            </div>
           ) : (
-            <div className="table-wrap">
+            <div className="table-wrap" style={{ border:'none', borderRadius:0 }}>
               <table className="data-table">
                 <thead><tr>
                   <th style={{ textAlign:'left' }}>Advisor</th>
-                  <th>Raw Date</th><th>Hour</th><th>Duration (min)</th><th>Connected</th>
-                  <th>Reassigned To</th><th>Action Taken</th><th>Resolved At</th>
+                  <th>Date</th><th>Hour</th><th>Duration</th><th>Connected</th>
+                  <th>Original Shift</th>
+                  <th>Assigned To</th>
+                  <th>Status</th>
+                  <th>Overridden</th>
+                  <th>By</th>
+                  <th>Resolved At</th>
                 </tr></thead>
                 <tbody>
-                  {filteredResolved.map((item,i)=>(
-                    <tr key={i}>
-                      <td style={{ textAlign:'left', fontWeight:700 }}>{item.advisor}</td>
-                      <td>{item.date}</td>
-                      <td>{item.hour}:00</td>
-                      <td>{item.duration?.toFixed(2)}</td>
-                      <td>{item.connected?'Yes':'No'}</td>
-                      <td style={{ fontSize:11 }}>{item.shiftDate||'Original'}</td>
-                      <td><span className={`badge ${STATUS_COLORS[item.status]||'badge-gray'}`}>{item.status}</span></td>
-                      <td style={{ fontSize:11, color:'var(--text-muted)' }}>{item.resolvedAt ? new Date(item.resolvedAt).toLocaleString('en-IN') : '—'}</td>
-                    </tr>
-                  ))}
+                  {filteredResolved.map((r, i) => {
+                    const wasOverridden = r.targetShiftDate && r.targetShiftDate !== r.originalShiftDate && r.originalShiftDate;
+                    const sc = STATUS_COLORS[r.status] || STATUS_COLORS.ignored;
+                    return (
+                      <tr key={i}>
+                        <td style={{ textAlign:'left', fontWeight:700 }}>{r.advisor}</td>
+                        <td style={{ fontSize:11 }}>{r.date}</td>
+                        <td>{r.hour}:00</td>
+                        <td>{r.duration?.toFixed(2)}m</td>
+                        <td>{r.connected ? '✓' : '—'}</td>
+                        <td style={{ fontSize:11, color:'var(--txt3)' }}>{r.originalShiftDate || r.shiftDate}</td>
+                        <td style={{ fontWeight:700, color: wasOverridden ? '#1e40af' : 'var(--txt)' }}>
+                          {r.targetShiftDate || r.shiftDate}
+                        </td>
+                        <td>
+                          <span className="badge" style={{ background:sc.bg, color:sc.color }}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td>
+                          {wasOverridden
+                            ? <span className="badge badge-blue" style={{ fontSize:9 }}>⚡ Override</span>
+                            : <span style={{ fontSize:11, color:'var(--txt3)' }}>—</span>}
+                        </td>
+                        <td style={{ fontSize:11 }}>{r.modifiedBy || '—'}</td>
+                        <td style={{ fontSize:11, color:'var(--txt3)' }}>
+                          {r.resolvedAt ? new Date(r.resolvedAt).toLocaleString('en-IN', { dateStyle:'short', timeStyle:'short' }) : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Memory tab */}
-      {activeTab === 'memory' && (
-        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          <div className="card">
-            <div className="card-title">Reconciliation Memory — Duplicate Suppression Store</div>
-            <div style={{ fontSize:13, color:'var(--text-muted)', marginBottom:16, lineHeight:1.8 }}>
-              Every processed row receives a unique signature <code style={{ background:'#f1f5f9', padding:'1px 6px', borderRadius:4, fontSize:11 }}>advisor|date|hour|duration|connected</code>.
-              Future uploads are checked against this memory — already-processed rows are silently suppressed, preventing double-counting across cumulative uploads.
-            </div>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12 }}>
-              {[
-                { label:'Stored Signatures', value:memStats.count, desc:'Unique rows in memory' },
-                { label:'Memory Size', value:`${memStats.sizeKB} KB`, desc:'Max: 1,024 KB' },
-                { label:'Auto-Reset', value:'7 days', desc:'Entries expire after 7 days' },
-              ].map(s=>(
-                <div key={s.label} className="stat-card">
-                  <div className="stat-label">{s.label}</div>
-                  <div className="stat-value" style={{ fontSize:24 }}>{s.value}</div>
-                  <div className="stat-sub">{s.desc}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ marginTop:16 }}>
-              <div style={{ fontSize:11, marginBottom:8, color:'var(--text-muted)' }}>Memory usage</div>
-              <div className="progress-bar" style={{ height:10 }}>
-                <div className="fill fill-green" style={{ width:`${Math.min((memStats.sizeKB/1024)*100,100)}%` }} />
-              </div>
-              <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, color:'var(--text-muted)', marginTop:4 }}>
-                <span>{memStats.sizeKB} KB used</span><span>1,024 KB max</span>
-              </div>
-            </div>
-
-            <div style={{ marginTop:20, padding:'14px 16px', background:'#fef9c3', borderRadius:8, border:'1px solid #fde047', fontSize:12 }}>
-              <strong>⚠ Clear Memory Warning:</strong> Clearing reconciliation memory means the next effort upload will reprocess all rows from scratch.
-              This can cause previously suppressed anomalies to re-appear. Only clear if you are starting a fresh quarter or debugging.
-            </div>
-            <div style={{ marginTop:12 }}>
-              <button className="btn btn-danger" onClick={handleClearMemory}>
-                🗑 Clear Reconciliation Memory
-              </button>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-title">How Duplicate Suppression Works</div>
-            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-              {[
-                { step:1, title:'Cumulative Upload Arrives', desc:'Each new effort CSV contains all rows from 10 AM until upload time — including rows from previous uploads.' },
-                { step:2, title:'Signature Generation', desc:'Every row gets a unique fingerprint: advisor + date + hour + duration + connected status.' },
-                { step:3, title:'Memory Comparison', desc:'System checks each signature against stored reconciliation memory.' },
-                { step:4, title:'Duplicate Detected → Suppress', desc:'If signature already exists in memory, row is silently excluded from calculations.' },
-                { step:5, title:'New Row → Process + Store', desc:'New signatures are processed normally and added to memory for future suppression.' },
-              ].map(s=>(
-                <div key={s.step} style={{ display:'flex', gap:12, padding:'10px 14px', background:'#f8fafc', borderRadius:8, alignItems:'flex-start' }}>
-                  <div style={{ width:28, height:28, borderRadius:'50%', background:'var(--em-green)', color:'white', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:800, flexShrink:0 }}>{s.step}</div>
-                  <div>
-                    <div style={{ fontWeight:700, fontSize:13, marginBottom:2 }}>{s.title}</div>
-                    <div style={{ fontSize:12, color:'var(--text-muted)' }}>{s.desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
     </div>

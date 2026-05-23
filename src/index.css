@@ -322,9 +322,11 @@ a { color: inherit; text-decoration: none; }
 .stat-trend.down { color: var(--red-t);   background: var(--red-bg); }
 
 /* ── Tables ─────────────────────────────────────────────────── */
-.table-wrap { overflow: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+.table-wrap { overflow: auto; border-radius: var(--radius); border: 1px solid var(--border); max-height: 70vh; }
+.table-wrap.tall { max-height: 80vh; }
+.table-wrap.full { max-height: none; overflow: visible; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.data-table thead { background: var(--s50); position: sticky; top: 0; z-index: 2; }
+.data-table thead { background: var(--s50); position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 var(--border); }
 .data-table th {
   padding: 10px 12px; font-size: 10.5px; font-weight: 700;
   text-transform: uppercase; letter-spacing: .04em; color: var(--txt2);
