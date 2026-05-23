@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../store/appStore.jsx';
 import { getCurrentOperationalDay, opDayLabel, formatShiftDate } from '../../utils/dateUtils.js';
-import { getShiftDates } from '../../parsers/effortParser.js';
+import { getShiftDates, filterRowsByDate, aggregateFilteredRows, summariseAgg } from '../../parsers/effortParser.js';
 import { exportBSCExcel, exportEffortExcel, exportCSV, exportPDF, copyToTeams } from '../../utils/exportUtils.js';
 
 
@@ -82,9 +82,8 @@ export default function TopHeader({ sidebarCollapsed, onMobileToggle }) {
     try {
       if (fmt==='excel')        await exportBSCExcel(filtered, { absentNames });
       else if (fmt==='effort_excel') {
-        const { aggregateFilteredRows, summariseAgg, filterRowsByDate } = await import('../../parsers/effortParser.js');
-        const rows = opDay ? filterRowsByDate(effortData?.rows||[], opDay) : (effortData?.rows||[]);
-        const summary = summariseAgg(aggregateFilteredRows(rows));
+        const rows = opDay ? effortData?.rows?.filter(r=>r.shiftDate===opDay) : (effortData?.rows||[]);
+        const summary = summariseAgg(aggregateFilteredRows(rows||[]));
         await exportEffortExcel(summary, opDay);
       }
       else if (fmt==='csv')     exportCSV(filtered);

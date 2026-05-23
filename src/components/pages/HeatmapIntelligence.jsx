@@ -1,247 +1,258 @@
-import { useState, useMemo } from 'react';
+// ============================================================
+// HEATMAP INTELLIGENCE
+// • Only includes PAs with >= 20 dials (productive)
+// • First call hour → Last call hour window per advisor per shift
+// • Multi-select: TL / APM / PA / Date filters
+// ============================================================
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../../store/appStore.jsx';
+import { getShiftDates, aggregateFilteredRows } from '../../parsers/effortParser.js';
+import { getCurrentOperationalDay, formatShiftDate } from '../../utils/dateUtils.js';
+import { EFFORT_RULES } from '../../constants/businessRules.js';
+import MultiSelect from '../shared/MultiSelect.jsx';
 
-// Operational hour label
-const HOUR_L = h => h===0?'12AM':h<12?`${h}AM`:h===12?'12PM':`${h-12}PM`;
+const HOUR_L = h => h === 0 ? '12a' : h < 12 ? `${h}a` : h === 12 ? '12p' : `${h-12}p`;
 
-// Convert hour to operational-day order position (10AM=0, 11AM=1, ..., 9AM=23)
-const opPos = h => (h - 10 + 24) % 24;
-const sortHours = hours => [...hours].sort((a,b) => opPos(a) - opPos(b));
-
-function getAdvisorWindow(hourData) {
-  const activeHours = Object.entries(hourData).filter(([,v])=>v.dials>0).map(([h])=>parseInt(h));
-  if (!activeHours.length) return { min:0, max:0, hours:[] };
-  // Sort by operational position
-  const sorted = sortHours(activeHours);
-  return { min:sorted[0], max:sorted[sorted.length-1], hours:sorted };
-}
-
-function colorForValue(v, max) {
-  if (!max || !v) return '#f1f5f9';
-  const p = Math.min(v/max, 1);
-  if (p < 0.2) return '#dbeafe';
-  if (p < 0.4) return '#93c5fd';
-  if (p < 0.6) return '#60a5fa';
-  if (p < 0.8) return '#3b82f6';
-  return '#1d4ed8';
+function heatColor(pct) {
+  if (pct === null) return '#f1f5f9'; // no activity in window
+  if (pct === 0)   return '#e0f2fe';  // active hour
+  if (pct < 0.3)   return '#93c5fd';
+  if (pct < 0.6)   return '#3b82f6';
+  return '#1d4ed8'; // high dead
 }
 
 export default function HeatmapIntelligence() {
   const { state } = useApp();
-  const { effortData, bscData, absenceOverrides } = state;
-  const [metric, setMetric]       = useState('dials');
-  const [tlFilter, setTlFilter]   = useState('All');
-  const [shiftFilter, setShiftFilter] = useState('All');
+  const { effortData, bscData } = state;
 
-  if (!effortData) return <div className="empty-state"><div className="empty-icon">🔥</div><h3>No Effort Data</h3></div>;
+  const allDates   = useMemo(() => getShiftDates(effortData?.rows), [effortData]);
+  const todayOpDay = getCurrentOperationalDay();
+  const defaultDate = allDates.includes(todayOpDay) ? todayOpDay : allDates[allDates.length - 1] || '';
 
-  const allAdvisors = bscData?.advisors||[];
-  const uniqueTLs   = ['All', ...new Set(allAdvisors.map(a=>a.tl).filter(Boolean))].sort();
-  const advisorMeta = useMemo(()=>{ const m={}; allAdvisors.forEach(a=>{m[a.name]=a;}); return m; }, [allAdvisors]);
-  const absentNames = new Set(Object.keys(absenceOverrides||{}).filter(n=>(absenceOverrides[n]||[]).length>0));
+  const [selDates,  setSelDates]  = useState([]);
+  const [tlFilter,  setTlFilter]  = useState([]);
+  const [apmFilter, setApmFilter] = useState([]);
+  const [paFilter,  setPaFilter]  = useState([]);
+  const [metric,    setMetric]    = useState('deadPct'); // 'deadPct' | 'dials' | 'ptt'
 
-  // Build per-advisor, per-hour aggregation
-  const hourGrid = useMemo(() => {
-    const grid = {};
-    for (const row of (effortData.rows||[])) {
-      const meta = advisorMeta[row.advisor];
-      if (tlFilter!=='All' && meta?.tl !== tlFilter) continue;
-      if (shiftFilter!=='All' && meta?.region !== shiftFilter) continue;
-      if (!grid[row.advisor]) grid[row.advisor] = {};
+  // Effective dates (default = today's op day)
+  const effectiveDates = selDates.length > 0 ? selDates : (defaultDate ? [defaultDate] : allDates);
+
+  // Build advisor metadata map from BSC
+  const advisorMeta = useMemo(() => {
+    const m = {};
+    (bscData?.advisors || []).forEach(a => { m[a.name] = a; });
+    return m;
+  }, [bscData]);
+
+  const uniqueTLs  = useMemo(() => [...new Set((bscData?.advisors||[]).map(a=>a.tl).filter(Boolean))].sort(), [bscData]);
+  const uniqueAPMs = useMemo(() => [...new Set((bscData?.advisors||[]).map(a=>a.apm).filter(Boolean))].sort(), [bscData]);
+
+  // Compute heatmap data
+  const { heatRows, allHours } = useMemo(() => {
+    if (!effortData?.rows) return { heatRows: [], allHours: [] };
+
+    // Filter rows to selected dates
+    const dateSet = new Set(effectiveDates);
+    const filteredRows = effortData.rows.filter(r => dateSet.has(r.shiftDate));
+
+    // Aggregate per advisor
+    const agg = {};
+    for (const row of filteredRows) {
+      const adv = row.advisor;
+      if (!agg[adv]) agg[adv] = { dials: 0, hours: {}, meta: advisorMeta[adv] || {} };
+      agg[adv].dials += 1;
       const h = row.hour;
-      if (!grid[row.advisor][h]) grid[row.advisor][h] = { dials:0, connects:0, pttMins:0 };
-      grid[row.advisor][h].dials    += 1;
-      grid[row.advisor][h].connects += row.connected||0;
-      grid[row.advisor][h].pttMins  += row.pttMinutes||0;
+      if (!agg[adv].hours[h]) agg[adv].hours[h] = { calls: 0, ptt: 0 };
+      agg[adv].hours[h].calls += 1;
+      if (row.isPTT) agg[adv].hours[h].ptt += row.pttMinutes || 0;
     }
-    return grid;
-  }, [effortData, tlFilter, shiftFilter, advisorMeta]);
 
-  // Get union of all active hours (first-to-last across team)
-  const teamActiveHours = useMemo(() => {
-    const allActive = new Set();
-    for (const [adv, hours] of Object.entries(hourGrid)) {
-      if (absentNames.has(adv)) continue;
-      for (const [h, v] of Object.entries(hours)) {
-        if (v.dials > 0) allActive.add(parseInt(h));
-      }
-    }
-    return sortHours([...allActive]);
-  }, [hourGrid, absentNames]);
+    // Apply hierarchy filters and productive day filter (>= 20 dials)
+    let rows = Object.entries(agg)
+      .filter(([, d]) => d.dials >= EFFORT_RULES.minDialsForProductiveDay)
+      .map(([name, d]) => {
+        const meta      = d.meta;
+        const hourKeys  = Object.keys(d.hours).map(Number);
+        const firstHour = Math.min(...hourKeys);
+        const lastHour  = Math.max(...hourKeys);
+        // Dead hours = hours in window [first, last] where calls === 0
+        const windowHours = [];
+        for (let h = firstHour; h <= lastHour; h++) windowHours.push(h);
+        const activeHours = hourKeys.filter(h => h >= firstHour && h <= lastHour);
+        const deadHours   = windowHours.filter(h => !activeHours.includes(h));
+        const deadPct     = windowHours.length > 0 ? deadHours.length / windowHours.length : 0;
+        return { name, tl: meta.tl, apm: meta.apm, region: meta.region,
+          totalDials: d.dials, firstHour, lastHour, windowHours, activeHours, deadHours,
+          deadPct, hours: d.hours };
+      });
 
-  const getValue = (adv, h) => {
-    const cell = hourGrid[adv]?.[h];
-    if (!cell) return 0;
-    if (metric==='dials')    return cell.dials;
-    if (metric==='connects') return cell.connects;
-    if (metric==='ptt')      return Math.round(cell.pttMins);
-    return 0;
-  };
+    if (tlFilter.length)  rows = rows.filter(r => tlFilter.includes(r.tl));
+    if (apmFilter.length) rows = rows.filter(r => apmFilter.includes(r.apm));
+    if (paFilter.length)  rows = rows.filter(r => paFilter.includes(r.name));
 
-  const maxVal = useMemo(() => {
-    let m = 0;
-    for (const adv of Object.keys(hourGrid)) {
-      for (const h of teamActiveHours) m = Math.max(m, getValue(adv, h));
-    }
-    return m||1;
-  }, [hourGrid, teamActiveHours, metric]);
+    rows.sort((a, b) => b.deadPct - a.deadPct);
 
-  const advisorList = Object.keys(hourGrid).filter(n=>!absentNames.has(n)).sort();
+    // All hours across ALL advisors' windows for X-axis
+    const hourSet = new Set();
+    rows.forEach(r => r.windowHours.forEach(h => hourSet.add(h)));
+    const allHours = [...hourSet].sort((a, b) => a - b);
 
-  // Per-advisor window (first call to last call)
-  const advisorWindows = useMemo(() => {
-    const w = {};
-    advisorList.forEach(adv => { w[adv] = getAdvisorWindow(hourGrid[adv]||{}); });
-    return w;
-  }, [advisorList, hourGrid]);
+    return { heatRows: rows, allHours };
+  }, [effortData, effectiveDates, tlFilter, apmFilter, paFilter, advisorMeta]);
 
-  // Hour totals across active advisors
-  const hourTotals = useMemo(() => {
-    const t = {};
-    teamActiveHours.forEach(h => { t[h] = advisorList.reduce((s,adv) => s + getValue(adv,h), 0); });
-    return t;
-  }, [advisorList, teamActiveHours, hourGrid, metric]);
+  if (!effortData?.rows) return (
+    <div className="empty-state card">
+      <div className="empty-icon">🔥</div>
+      <h3>No Effort Data Loaded</h3>
+      <p>Upload your Raw Effort CSV to activate the Heatmap.</p>
+    </div>
+  );
 
-  const METRIC_LABELS = { dials:'Dials', connects:'Connected Calls', ptt:'PTT (min)' };
+  const uniquePAs = [...new Set(effortData.rows.map(r => r.advisor).filter(Boolean))].sort();
+  const avgDead   = heatRows.length ? heatRows.reduce((s, r) => s + r.deadPct, 0) / heatRows.length : 0;
+  const highRisk  = heatRows.filter(r => r.deadPct > 0.4);
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-      {/* Controls */}
-      <div className="card" style={{ padding:'10px 14px' }}>
-        <div className="filter-bar" style={{ marginBottom:0 }}>
-          <div>
-            {Object.entries(METRIC_LABELS).map(([k,l])=>(
-              <button key={k} className={`btn btn-sm ${metric===k?'btn-primary':'btn-outline'}`} style={{ marginRight:6 }} onClick={()=>setMetric(k)}>{l}</button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+      {/* Filters */}
+      <div className="card" style={{ padding: '12px 16px' }}>
+        <div className="filter-bar" style={{ marginBottom: 10 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--txt2)' }}>📅 Dates:</span>
+          <div className="date-multi-grid" style={{ maxHeight: 'none' }}>
+            {[...allDates].reverse().map(d => (
+              <button key={d} className={`date-chip ${selDates.includes(d) ? 'selected' : ''}`}
+                onClick={() => setSelDates(p => p.includes(d) ? p.filter(x => x !== d) : [...p, d])}>
+                {formatShiftDate(d)}
+              </button>
             ))}
           </div>
-          <select className="filter-select" value={tlFilter} onChange={e=>setTlFilter(e.target.value)}>
-            {uniqueTLs.map(t=><option key={t}>{t}</option>)}
+          {selDates.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => setSelDates([])}>✕ Clear</button>}
+        </div>
+        <div className="filter-bar" style={{ marginBottom: 0 }}>
+          <MultiSelect label="TL"  options={uniqueTLs}  value={tlFilter}  onChange={setTlFilter} />
+          <MultiSelect label="APM" options={uniqueAPMs} value={apmFilter} onChange={setApmFilter} />
+          <MultiSelect label="PA"  options={uniquePAs}  value={paFilter}  onChange={setPaFilter} searchable />
+          <select className="filter-select" value={metric} onChange={e => setMetric(e.target.value)}>
+            <option value="deadPct">View: Dead Hour %</option>
+            <option value="dials">View: Call Volume</option>
           </select>
-          <select className="filter-select" value={shiftFilter} onChange={e=>setShiftFilter(e.target.value)}>
-            <option value="All">All Shifts</option>
-            <option value="ROW">ROW</option>
-            <option value="US">US</option>
-          </select>
-          <span style={{ marginLeft:'auto', fontSize:12, color:'var(--text-muted)' }}>
-            Showing hours: {teamActiveHours[0]!==undefined?HOUR_L(teamActiveHours[0]):''} → {teamActiveHours[teamActiveHours.length-1]!==undefined?HOUR_L(teamActiveHours[teamActiveHours.length-1]):''} (first-to-last call window)
+          {(tlFilter.length || apmFilter.length || paFilter.length) > 0 &&
+            <button className="btn btn-outline btn-sm" onClick={() => { setTlFilter([]); setApmFilter([]); setPaFilter([]); }}>✕ Clear All</button>}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--txt3)' }}>
+            Showing: {effectiveDates.map(d => formatShiftDate(d)).join(', ')} · {heatRows.length} PAs (≥20 dials only)
           </span>
         </div>
       </div>
 
-      {/* Legend */}
-      <div style={{ display:'flex', gap:12, fontSize:11, alignItems:'center' }}>
-        <span style={{ fontWeight:600, color:'var(--text-muted)' }}>Intensity:</span>
-        {[0,0.2,0.4,0.6,0.8,1].map(p=>(
-          <div key={p} style={{ display:'flex', alignItems:'center', gap:3 }}>
-            <div style={{ width:18, height:12, background:colorForValue(p*100,100), borderRadius:2 }}/>
-            <span style={{ color:'var(--text-muted)' }}>{Math.round(p*100)}%</span>
+      {/* Summary stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {[
+          { label: 'Active PAs', value: heatRows.length, accent: '#16a34a', sub: '≥20 dials' },
+          { label: 'Avg Dead Hour %', value: `${(avgDead * 100).toFixed(1)}%`, accent: '#f59e0b', sub: 'within active window' },
+          { label: 'High Risk PAs', value: highRisk.length, accent: '#ef4444', sub: '>40% dead hours' },
+          { label: 'Excluded PAs', value: (effortData.advisors?.length || 0) - heatRows.length, accent: '#94a3b8', sub: '<20 dials (non-productive)' },
+        ].map(s => (
+          <div key={s.label} className="stat-card">
+            <div className="stat-accent" style={{ background: s.accent }} />
+            <div className="stat-label">{s.label}</div>
+            <div className="stat-value" style={{ fontSize: 22 }}>{s.value}</div>
+            <div className="stat-sub">{s.sub}</div>
           </div>
         ))}
-        <span style={{ marginLeft:8, color:'var(--text-muted)', fontStyle:'italic' }}>
-          ⚠ Only showing hours between first and last call of team — not 24hr
-        </span>
       </div>
 
-      {/* Hour summary bar */}
-      <div className="card">
-        <div className="card-title">{METRIC_LABELS[metric]} by Hour (Team Active Window)</div>
-        <div style={{ display:'flex', gap:4, alignItems:'flex-end', height:90, overflowX:'auto', padding:'0 4px' }}>
-          {teamActiveHours.map(h=>{
-            const val = hourTotals[h]||0;
-            const maxH = Math.max(...Object.values(hourTotals),1);
-            const pct  = val/maxH;
-            return (
-              <div key={h} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:2, minWidth:34 }}>
-                <div style={{ fontSize:9, color:'var(--text-muted)', fontWeight:700 }}>{val||''}</div>
-                <div style={{ width:30, height:Math.max(pct*64,2), background:'#3b82f6', borderRadius:'3px 3px 0 0' }}/>
-                <div style={{ fontSize:9, color:'var(--text-muted)', transform:'rotate(-35deg)', transformOrigin:'top left', whiteSpace:'nowrap', marginLeft:4 }}>
-                  {HOUR_L(h)}
-                </div>
-              </div>
-            );
-          })}
+      {/* Legend */}
+      <div className="card" style={{ padding: '8px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 11 }}>
+          <span style={{ fontWeight: 700, color: 'var(--txt2)' }}>Legend:</span>
+          {[
+            { color: '#e0f2fe', label: 'Active (0% dead)' },
+            { color: '#93c5fd', label: 'Low (<30%)' },
+            { color: '#3b82f6', label: 'Moderate (30-60%)' },
+            { color: '#1d4ed8', label: 'High (>60%)' },
+            { color: '#f1f5f9', label: 'Outside window' },
+          ].map(({ color, label }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div style={{ width: 14, height: 14, background: color, borderRadius: 2, border: '1px solid #e2e8f0' }} />
+              <span>{label}</span>
+            </div>
+          ))}
+          <span style={{ marginLeft: 'auto', color: 'var(--txt3)' }}>
+            Window = First call hour → Last call hour per advisor
+          </span>
         </div>
       </div>
 
-      {/* Advisor × Hour heatmap */}
-      <div className="card">
-        <div className="card-title" style={{ justifyContent:'space-between' }}>
-          <span>Advisor Activity Heatmap — {METRIC_LABELS[metric]}</span>
-          <span style={{ fontSize:11, color:'var(--text-muted)', fontStyle:'italic' }}>Window = first call to last call per advisor</span>
-        </div>
-        <div style={{ overflowX:'auto' }}>
-          <table style={{ borderCollapse:'collapse', fontSize:11 }}>
-            <thead style={{ position:'sticky', top:0, zIndex:5, background:'white' }}>
-              <tr>
-                <th style={{ textAlign:'left', padding:'6px 14px', minWidth:160, borderBottom:'2px solid var(--border)', position:'sticky', left:0, background:'white', zIndex:6 }}>
-                  Advisor / Hour
-                </th>
-                {teamActiveHours.map(h=>(
-                  <th key={h} style={{ width:34, padding:'4px 2px', textAlign:'center', fontSize:9, color:'var(--text-muted)', fontWeight:600, borderBottom:'2px solid var(--border)' }}>
-                    {HOUR_L(h)}
+      {/* Heatmap grid */}
+      {heatRows.length === 0 ? (
+        <div className="empty-state card"><div>🔍</div><h3>No productive advisors match filters</h3></div>
+      ) : (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 11, minWidth: '100%' }}>
+              <thead>
+                <tr style={{ background: 'var(--s900)', color: 'white' }}>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', position: 'sticky', left: 0, background: 'var(--s900)', zIndex: 2, fontSize: 11, fontWeight: 700 }}>
+                    Advisor / Hr
                   </th>
-                ))}
-                <th style={{ padding:'4px 10px', fontSize:10, color:'var(--text-muted)', borderBottom:'2px solid var(--border)', borderLeft:'2px solid var(--border)' }}>Total</th>
-                <th style={{ padding:'4px 10px', fontSize:10, color:'var(--text-muted)', borderBottom:'2px solid var(--border)' }}>Window</th>
-              </tr>
-            </thead>
-            <tbody>
-              {advisorList.map(adv => {
-                const win      = advisorWindows[adv];
-                const rowTotal = teamActiveHours.reduce((s,h)=>s+getValue(adv,h),0);
-                const advMax   = Math.max(...teamActiveHours.map(h=>getValue(adv,h)),1);
-                return (
-                  <tr key={adv}>
-                    <td style={{ padding:'2px 14px', fontWeight:600, fontSize:12, position:'sticky', left:0, background:'white', zIndex:2, borderRight:'1px solid var(--border)', whiteSpace:'nowrap' }}>
-                      {adv}
-                      <span style={{ marginLeft:6, fontSize:9, color:advisorMeta[adv]?.region==='US'?'#1e40af':'#166534', fontWeight:700 }}>
-                        {advisorMeta[adv]?.region||''}
-                      </span>
+                  <th style={{ padding: '8px', textAlign: 'center', fontWeight: 700, color: '#94a3b8', fontSize: 10 }}>Window</th>
+                  <th style={{ padding: '8px', textAlign: 'center', fontWeight: 700, color: '#94a3b8', fontSize: 10 }}>Dead%</th>
+                  {allHours.map(h => (
+                    <th key={h} style={{ padding: '8px 4px', textAlign: 'center', fontWeight: 600, color: '#94a3b8', fontSize: 10, minWidth: 28 }}>
+                      {HOUR_L(h)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {heatRows.map((row, i) => (
+                  <tr key={row.name} style={{ borderBottom: '1px solid var(--s100)' }}>
+                    <td style={{ padding: '8px 14px', fontWeight: 700, fontSize: 12, position: 'sticky', left: 0, background: i % 2 === 0 ? 'white' : '#f8fafc', zIndex: 1, whiteSpace: 'nowrap' }}>
+                      {row.name}
+                      <div style={{ fontSize: 9, color: 'var(--txt3)', fontWeight: 400 }}>{row.apm || ''}</div>
                     </td>
-                    {teamActiveHours.map(h=>{
-                      const v     = getValue(adv, h);
-                      const inWin = win.hours.includes(h);
+                    <td style={{ padding: '6px 8px', textAlign: 'center', fontSize: 10, color: 'var(--txt3)', whiteSpace: 'nowrap' }}>
+                      {HOUR_L(row.firstHour)}→{HOUR_L(row.lastHour)}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 700, fontSize: 11,
+                      color: row.deadPct > 0.4 ? '#dc2626' : row.deadPct > 0.2 ? '#d97706' : '#16a34a' }}>
+                      {(row.deadPct * 100).toFixed(0)}%
+                    </td>
+                    {allHours.map(h => {
+                      const inWindow = h >= row.firstHour && h <= row.lastHour;
+                      const hourData = row.hours[h];
+                      const isActive = Boolean(hourData);
+                      const isDead   = inWindow && !isActive;
+                      const calls    = hourData?.calls || 0;
+                      let bg = '#f1f5f9'; // outside window
+                      if (inWindow) {
+                        if (isDead) {
+                          const deadFrac = row.deadHours.length / Math.max(row.windowHours.length, 1);
+                          bg = deadFrac > 0.6 ? '#1d4ed8' : deadFrac > 0.3 ? '#3b82f6' : '#93c5fd';
+                        } else {
+                          bg = '#e0f2fe'; // active hour
+                        }
+                      }
                       return (
-                        <td key={h} style={{
-                          width:34, height:26,
-                          background: !inWin ? '#f8fafc' : colorForValue(v, advMax),
-                          border: '1px solid white',
-                          position: 'relative',
-                          opacity: inWin ? 1 : 0.3,
-                        }}>
-                          {v > 0 && (
-                            <span style={{ fontSize:9, fontWeight:700, color: v/advMax>0.5?'white':'#1e40af', position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                              {v>99?'99+':v}
-                            </span>
-                          )}
+                        <td key={h}
+                          title={inWindow ? (isDead ? `${HOUR_L(h)} — Dead hour (no calls)` : `${HOUR_L(h)} — ${calls} calls`) : `${HOUR_L(h)} — Outside window`}
+                          style={{ padding: '4px 2px', textAlign: 'center' }}>
+                          <div style={{ width: 24, height: 24, margin: '0 auto', borderRadius: 4, background: bg,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: isDead ? '#dbeafe' : '#1e40af' }}>
+                            {isActive && calls > 0 ? calls : ''}
+                          </div>
                         </td>
                       );
                     })}
-                    <td style={{ textAlign:'center', fontWeight:700, fontSize:11, borderLeft:'2px solid var(--border)', color:'var(--em-green)' }}>{rowTotal}</td>
-                    <td style={{ textAlign:'center', fontSize:10, color:'var(--text-muted)', whiteSpace:'nowrap', padding:'2px 8px' }}>
-                      {win.hours.length>0 ? `${HOUR_L(win.min)} → ${HOUR_L(win.max)}` : '—'}
-                    </td>
                   </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr style={{ borderTop:'2px solid var(--border)', background:'#f8fafc' }}>
-                <td style={{ padding:'4px 14px', fontWeight:700, fontSize:11, position:'sticky', left:0, background:'#f8fafc' }}>TOTAL</td>
-                {teamActiveHours.map(h=>(
-                  <td key={h} style={{ textAlign:'center', fontSize:10, fontWeight:700, padding:'4px 2px', color:'var(--text-primary)' }}>
-                    {hourTotals[h]||''}
-                  </td>
                 ))}
-                <td style={{ textAlign:'center', fontWeight:800, fontSize:12, borderLeft:'2px solid var(--border)', color:'var(--em-green)' }}>
-                  {teamActiveHours.reduce((s,h)=>s+(hourTotals[h]||0),0)}
-                </td>
-                <td/>
-              </tr>
-            </tfoot>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

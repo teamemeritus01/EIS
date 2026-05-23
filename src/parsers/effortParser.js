@@ -74,20 +74,28 @@ export async function parseEffortCSV(file) {
           const shiftDate = getShiftDate(row.date, row.hour);
           if (!shiftDate) continue;
 
-          // Check for future timestamps (compare local dates to avoid timezone issues)
-          let callDate;
+          // FUTURE CALL DETECTION: Compare FULL datetime (date + hour) to current time
+          // Bug fix: date-only comparison missed same-day future hours (e.g., Hour 23 at 06:00 today)
+          let callDateTime;
           if (row.date && row.date.includes('/')) {
             const p = row.date.split('/');
-            callDate = new Date(parseInt(p[2]), parseInt(p[0])-1, parseInt(p[1]));
+            callDateTime = new Date(parseInt(p[2]), parseInt(p[0])-1, parseInt(p[1]), row.hour || 0, 0, 0);
           } else {
-            callDate = new Date(row.date);
+            callDateTime = new Date(row.date);
+            if (!isNaN(callDateTime)) callDateTime.setHours(row.hour || 0, 0, 0, 0);
           }
-          // Compare date only (ignore time) — a future date means tomorrow or later
-          const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-          const callDayStart = callDate && !isNaN(callDate) ? new Date(callDate.getFullYear(), callDate.getMonth(), callDate.getDate()) : null;
-          if (callDayStart && callDayStart > todayStart) {
-            anomalies.push({ ...row, shiftDate, reason: 'Future timestamp' });
-            continue;
+          // Flag if call's datetime (date + hour) is beyond current system time
+          if (callDateTime && !isNaN(callDateTime) && callDateTime > now) {
+            anomalies.push({
+              ...row, shiftDate,
+              reason: 'Future timestamp',
+              anomalyType: 'SYNC_ANOMALY',
+              detectedAt: now.toISOString(),
+              callDateTime: callDateTime.toISOString(),
+              originalDate: row.date,
+              originalHour: row.hour,
+            });
+            continue; // Exclude from standard calculations
           }
 
           // Compute signature for deduplication (in-memory only for this upload)
@@ -333,8 +341,17 @@ export function filterRowsByDate(rows, shiftDate) {
 
 // ── Get all unique shift dates from rows ──────────────────
 export function getShiftDates(rows) {
-  const dates = [...new Set((rows||[]).map(r => r.shiftDate).filter(Boolean))];
-  return dates.sort();
+  // Operational day = if current hour < 10, previous day; else today
+  const now = new Date();
+  const currentOpDay = now.getHours() < 10
+    ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+    : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const opDayStr = `${currentOpDay.getFullYear()}-${String(currentOpDay.getMonth()+1).padStart(2,'0')}-${String(currentOpDay.getDate()).padStart(2,'0')}`;
+
+  const dates = [...new Set((rows||[]).map(r => r.shiftDate).filter(Boolean))]
+    .filter(d => d <= opDayStr)  // exclude future shift dates
+    .sort();
+  return dates;
 }
 
 // ── Reaggregate from a filtered set of rows ───────────────

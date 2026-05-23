@@ -83,7 +83,12 @@ const INITIAL_STATE = {
   // Data
   bscData:        _saved?.bscData        || null,
   effortData:     _saved?.effortData     || null,
-  attendanceData: null,
+  attendanceData: (() => {
+    try {
+      const raw = sessionStorage.getItem('em_attendance');
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })(),
 
   // Filters
   filters: {
@@ -208,6 +213,12 @@ export function AppProvider({ children }) {
 
   const setAttendanceData = useCallback((data) => {
     dispatch({ type: 'SET_ATTENDANCE_DATA', payload: data });
+    // Keep attendance in sessionStorage (survives tab navigation, cleared on close)
+    if (data) {
+      try { sessionStorage.setItem('em_attendance', JSON.stringify(data)); } catch {}
+    } else {
+      sessionStorage.removeItem('em_attendance');
+    }
   }, []);
 
   // Filters
