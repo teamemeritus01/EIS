@@ -95,7 +95,7 @@ export default function QuarterlyConfig() {
             </div>
           </div>
           <div style={{ display:'flex', gap:10 }}>
-            <button className="btn btn-outline" onClick={handleReset} style={{ borderColor:'rgba(255,255,255,.3)', color:'white' }}>
+            <button className="btn btn-outline" onClick={handleReset} style={{ borderColor:'#ef4444', color:'#ef4444', background:'transparent' }}>
               ↺ Reset to Defaults
             </button>
             <button className="btn btn-primary" onClick={handleSave} style={{ background: saved?'#166534':'#3b82f6' }}>

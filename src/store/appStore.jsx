@@ -7,6 +7,21 @@ import { createContext, useContext, useReducer, useCallback } from 'react';
 
 const AppContext = createContext(null);
 
+// Load persisted session
+const _sess = loadSession();
+const _savedState = (() => {
+  try {
+    const raw = localStorage.getItem(PERSIST_KEY);
+    if (!raw) return {};
+    const s = JSON.parse(raw);
+    // Check 7-day reset for reconciliation memory
+    if (s._savedAt && (Date.now() - s._savedAt) > MEM_TTL_DAYS * 24 * 60 * 60 * 1000) {
+      return { ...s, reconciliationApproved:[], reconciliationQueue:[] };
+    }
+    return s;
+  } catch { return {}; }
+})();
+
 const INITIAL_STATE = {
   // Auth
   auth: { loggedIn: false, role: null, user: null },
@@ -231,12 +246,13 @@ function loadPersistedState() {
 }
 
 function persistState(partial) {
+  // Only persist if total size <= 1MB
   try {
     const existing = JSON.parse(localStorage.getItem(PERSIST_KEY) || '{}');
-    const next = { ...existing, ...partial };
+    const next = { ...existing, ...partial, _savedAt: Date.now() };
     // Cap size
     const serialized = JSON.stringify(next);
-    if (serialized.length < 4 * 1024 * 1024) {
+    if (serialized.length < STORAGE_MAX) {
       localStorage.setItem(PERSIST_KEY, serialized);
     }
   } catch (e) {

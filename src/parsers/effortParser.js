@@ -105,7 +105,8 @@ export async function parseEffortCSV(file) {
           }
           sessionSigs.add(sig);
 
-          // PTT logic
+          // RULE: Connected = Salesforce field (Connected=1)
+          // PTT = Connected=1 calls that are also > 90 seconds duration
           const isPTT = row.connected === 1 && row.duration > EFFORT_RULES.pttMinDurationMin;
 
           rows.push({

@@ -1,98 +1,107 @@
+import { useState } from 'react';
 import { useApp } from '../../store/appStore.jsx';
 
 const NAV = [
-  { section:'OVERVIEW' },
-  { id:'upload',        label:'Upload Center',          icon:'⬆' },
-  { id:'executive',     label:'Executive Overview',     icon:'🏠' },
-  { section:'INCENTIVE INTELLIGENCE' },
-  { id:'incentive',     label:'Incentive Intelligence', icon:'🏆' },
-  { id:'d1',            label:'D-1 Command Center',     icon:'📅' },
-  { id:'l7d',           label:'L7D BSC Trend',          icon:'📈' },
-  { id:'scenario',      label:'Scenario Engine',        icon:'🎯' },
-  { id:'atrisk',        label:'At-Risk Tracker',        icon:'⚠' },
-  { section:'EFFORT INTELLIGENCE' },
-  { id:'effort',        label:'Effort Intelligence',    icon:'📞' },
-  { id:'heatmap',       label:'Heatmap Intelligence',   icon:'🔥' },
-  { id:'deadhours',     label:'Dead Hours',             icon:'💤' },
-  { id:'shiftsplit',    label:'Shift Split Analytics',  icon:'📊' },
-  { section:'ATTENDANCE' },
-  { id:'attendance',    label:'Attendance Intelligence',icon:'✅' },
-  { id:'absence',       label:'Absence Manager',        icon:'🔒' },
-  { section:'OPERATIONS' },
-  { id:'reconciliation',label:'Reconciliation Center',  icon:'🔄' },
-  { id:'export',        label:'Export Center',          icon:'📤' },
-  { id:'config',        label:'Quarterly Config',       icon:'⚙' },
-  { section:'FUTURE MODULES' },
-  { id:'future_team',     label:'Team Intelligence',       icon:'👥', coming:true },
-  { id:'future_learning', label:'Learning & Calibration',  icon:'📚', coming:true },
-  { id:'future_quality',  label:'Quality Intelligence',    icon:'⭐', coming:true },
+  { section: 'OVERVIEW' },
+  { id:'upload',        label:'Upload Center',          icon:'⬆', roles:['admin','director','tl','apm'] },
+  { id:'executive',     label:'Executive Overview',     icon:'🏠', roles:['admin','director','tl','apm'] },
+  { section: 'INCENTIVE' },
+  { id:'incentive',     label:'Incentive Intelligence', icon:'🏆', roles:['admin','director','tl','apm'] },
+  { id:'d1',            label:'D-1 Command Center',     icon:'📅', roles:['admin','director','tl','apm'] },
+  { id:'l7d',           label:'L7D BSC Trend',          icon:'📈', roles:['admin','director','tl','apm'] },
+  { id:'scenario',      label:'Scenario Engine',        icon:'🎯', roles:['admin','director','tl','apm'] },
+  { id:'atrisk',        label:'At-Risk Tracker',        icon:'⚠',  roles:['admin','director','tl','apm'] },
+  { section: 'EFFORT INTELLIGENCE' },
+  { id:'effort',        label:'Effort Intelligence',    icon:'📞', roles:['admin','director','tl','apm'] },
+  { id:'heatmap',       label:'Heatmap Intelligence',   icon:'🔥', roles:['admin','director','tl','apm'] },
+  { id:'deadhours',     label:'Dead Hours',             icon:'💤', roles:['admin','director','tl','apm'] },
+  { id:'shiftsplit',    label:'Shift Split Analytics',  icon:'📊', roles:['admin','director','tl'] },
+  { section: 'ATTENDANCE' },
+  { id:'attendance',    label:'Attendance Intelligence',icon:'✅', roles:['admin','director','tl','apm'] },
+  { id:'absence',       label:'Absence Manager',        icon:'🔒', roles:['admin','tl','apm'] },
+  { section: 'TEAM MANAGEMENT' },
+  { id:'tl',            label:'TL Module',              icon:'👥', roles:['admin','director','tl'] },
+  { section: 'OPERATIONS' },
+  { id:'reconciliation',label:'Reconciliation Center',  icon:'🔄', roles:['admin','tl'] },
+  { id:'export',        label:'Export Center',          icon:'📤', roles:['admin','director','tl','apm'] },
+  { id:'config',        label:'Quarterly Config',       icon:'⚙',  roles:['admin'] },
 ];
 
-function SessionRow({ label, value }) {
-  return (
-    <div style={{ display:'flex', justifyContent:'space-between', fontSize:10, padding:'2px 0', lineHeight:1.5 }}>
-      <span style={{ color:'#4b5563' }}>{label}</span>
-      <span style={{ color:'#9ca3af', fontWeight:600, maxWidth:110, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', textAlign:'right' }}>{value || '—'}</span>
-    </div>
-  );
-}
-
-export default function Sidebar() {
-  const { state, setTab } = useApp();
-  const { activeTab, bscData, effortData, auth, reconciliationQueue = [], uploadStatus } = state;
+export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
+  const { state, setTab, logout } = useApp();
+  const { activeTab, bscData, reconciliationQueue=[], auth } = state;
+  const role = auth.role || 'admin';
 
   const atRiskCount  = bscData?.advisors?.filter(a=>a.qualification?.pdStatus==='At Risk'||a.qualification?.pdStatus==='Off Track').length || 0;
   const reconCount   = reconciliationQueue.length || 0;
-  const sessionId    = `S-${new Date().toISOString().slice(0,10).replace(/-/g,'')}`;
-  const recordsProcd = effortData?.processedRows?.toLocaleString() || '—';
-  const lastUpload   = effortData ? new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '—';
-  const uploadType   = effortData ? 'Hourly Upload' : '—';
+  const recordsProcd = state.effortData?.processedRows?.toLocaleString() || '—';
+  const lastUpload   = state.effortData ? new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}) : '—';
+
+  const visibleNav = NAV.filter(item => {
+    if (item.section) return true;
+    return !item.roles || item.roles.includes(role);
+  });
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">
-        <div className="logo-em">E</div>
-        <div>
-          <div className="logo-text">Emeritus OI</div>
-          <div className="logo-sub">FY26 Q4 · India OC</div>
+    <>
+      {/* Mobile overlay */}
+      {mobileOpen && <div className="sidebar-overlay active" onClick={onMobileClose}/>}
+
+      <aside className={`sidebar ${collapsed?'collapsed':''} ${mobileOpen?'mobile-open':''}`}>
+        {/* Collapse toggle (desktop) */}
+        <button className="sidebar-collapse-btn" onClick={onToggle} title={collapsed?'Expand':'Collapse'}>
+          {collapsed ? '→' : '←'}
+        </button>
+
+        {/* Logo */}
+        <div className="logo-block">
+          <div className="logo-em">E</div>
+          <div>
+            <div className="logo-text">Emeritus OI</div>
+            <div className="logo-sub" style={{color:'#4b5563'}}>FY26 Q4 · India OC</div>
+          </div>
         </div>
-      </div>
 
-      <div style={{ flex:1, overflowY:'auto' }}>
-        {NAV.map((item, i) => {
-          if (item.section) return (
-            <div key={i} className="sidebar-section">
-              <div className="sidebar-section-label">{item.section}</div>
-            </div>
-          );
-          if (item.coming) return (
-            <div key={item.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 16px', fontSize:12, color:'#374151', opacity:.5 }}>
-              <span style={{ width:16 }}>{item.icon}</span>
-              <span style={{ flex:1 }}>{item.label}</span>
-              <span style={{ fontSize:9, background:'#374151', color:'white', padding:'1px 5px', borderRadius:3, fontWeight:700 }}>SOON</span>
-            </div>
-          );
-          return (
-            <div key={item.id} className={`sidebar-item${activeTab===item.id?' active':''}`} onClick={()=>setTab(item.id)}>
-              <span className="tab-icon">{item.icon}</span>
-              <span style={{ flex:1 }}>{item.label}</span>
-              {item.id==='atrisk'        && atRiskCount>0 && <span className="badge">{atRiskCount}</span>}
-              {item.id==='reconciliation'&& reconCount>0  && <span className="badge" style={{ background:'#f97316' }}>{reconCount}</span>}
-            </div>
-          );
-        })}
-      </div>
+        {/* Navigation */}
+        <nav className="sidebar-nav">
+          {visibleNav.map((item, i) => {
+            if (item.section) return (
+              <div key={i} className="sidebar-section">
+                <div className="sidebar-section-label">{item.section}</div>
+              </div>
+            );
+            const isActive = activeTab === item.id;
+            return (
+              <div key={item.id}
+                className={`sidebar-item ${isActive?'active':''}`}
+                onClick={()=>{ setTab(item.id); onMobileClose?.(); }}
+                title={item.label}>
+                <span className="tab-icon">{item.icon}</span>
+                <span className="sidebar-label">{item.label}</span>
+                {item.id==='atrisk'        && atRiskCount>0 && <span className="sidebar-badge">{atRiskCount}</span>}
+                {item.id==='reconciliation'&& reconCount>0  && <span className="sidebar-badge orange">{reconCount}</span>}
+              </div>
+            );
+          })}
+        </nav>
 
-      {/* Session Info */}
-      <div style={{ borderTop:'1px solid #1f2937', padding:'12px 16px' }}>
-        <div style={{ fontSize:10, fontWeight:700, letterSpacing:'.06em', color:'#4b5563', textTransform:'uppercase', marginBottom:8 }}>SESSION INFO</div>
-        <SessionRow label="Session ID"       value={sessionId} />
-        <SessionRow label="Uploaded By"      value={auth.user || auth.role} />
-        <SessionRow label="Upload Type"      value={uploadType} />
-        <SessionRow label="Records Processed" value={recordsProcd} />
-        <SessionRow label="Last Upload"      value={lastUpload} />
-        <SessionRow label="BSC Advisors"     value={bscData?.advisors?.length} />
-      </div>
-    </aside>
+        {/* Session Info */}
+        <div className="sidebar-session">
+          <div className="session-row"><span>Role</span><span style={{color:'#4ade80',fontWeight:700}}>{auth.role?.toUpperCase()}</span></div>
+          <div className="session-row"><span>User</span><span>{auth.user||'—'}</span></div>
+          <div className="session-row"><span>Records</span><span>{recordsProcd}</span></div>
+          <div className="session-row"><span>Last Upload</span><span>{lastUpload}</span></div>
+          <div className="session-row"><span>BSC Advisors</span><span>{bscData?.advisors?.length||'—'}</span></div>
+          <div style={{marginTop:10}}>
+            <button onClick={logout}
+              style={{width:'100%',padding:'6px',background:'rgba(239,68,68,.15)',border:'1px solid rgba(239,68,68,.3)',
+                borderRadius:'6px',color:'#f87171',fontSize:'11px',fontWeight:600,cursor:'pointer'}}>
+              Sign Out
+            </button>
+          </div>
+          <div style={{textAlign:'center',marginTop:8,fontSize:9,color:'#374151'}}>v3.0 · Session: 12h · 1MB limit</div>
+        </div>
+      </aside>
+    </>
   );
 }

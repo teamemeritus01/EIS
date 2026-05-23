@@ -1,135 +1,187 @@
-import { useState, useEffect } from 'react';
-import { getCurrentOperationalDay, opDayLabel } from '../../utils/dateUtils.js';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../store/appStore.jsx';
+import { getCurrentOperationalDay, opDayLabel, formatShiftDate } from '../../utils/dateUtils.js';
+import { getShiftDates } from '../../parsers/effortParser.js';
+import { exportBSCExcel, exportEffortExcel, exportCSV, exportPDF, copyToTeams } from '../../utils/exportUtils.js';
 
-export default function TopHeader() {
-  const { state, setTab, logout } = useApp();
-  const { auth, bscData, effortData, reconciliationQueue = [], uploadStatus } = state;
-  const [now, setNow] = useState(new Date());
-  const [opDay, setOpDay] = useState(getCurrentOperationalDay());
-  const [shiftView, setShiftView] = useState('All');
+
+const PAGE_EXPORT_CONFIG = {
+  executive:     { label:'Overview Export', formats:['pdf','teams'] },
+  incentive:     { label:'Export Incentive Report', formats:['excel','csv','pdf','teams'] },
+  effort:        { label:'Export Effort Summary', formats:['effort_excel','csv'] },
+  d1:            { label:'Export D-1 Report', formats:['excel','csv'] },
+  l7d:           { label:'Export L7D Trend', formats:['csv'] },
+  scenario:      { label:'Export Scenarios', formats:['pdf'] },
+  atrisk:        { label:'Export At-Risk List', formats:['excel','csv'] },
+  heatmap:       { label:'Export Heatmap', formats:['csv'] },
+  deadhours:     { label:'Export Dead Hours', formats:['csv'] },
+  attendance:    { label:'Export Attendance', formats:['excel','csv'] },
+  tl:            { label:'Export TL Report', formats:['excel','pdf'] },
+  export:        null,
+  default:       { label:'Export', formats:['excel','csv','pdf'] },
+};
+
+const FORMAT_LABELS = {
+  excel:'📊 BSC Excel',  effort_excel:'📋 Effort Excel',
+  csv:'📄 CSV Data',     pdf:'📄 PDF Report',
+  teams:'💬 Copy to Teams',
+};
+
+export default function TopHeader({ sidebarCollapsed, onMobileToggle }) {
+  const { state, setTab } = useApp();
+  const { activeTab, auth, bscData, effortData, absenceOverrides } = state;
+  const [now, setNow]       = useState(new Date());
   const [showNotif, setShowNotif] = useState(false);
-  const [refreshTimer, setRefreshTimer] = useState(300); // 5 min
+  const [showExport, setShowExport] = useState(false);
+  const [opDay, setOpDay]   = useState(getCurrentOperationalDay());
+  const [exporting, setExporting] = useState('');
+  const notifRef  = useRef();
+  const exportRef = useRef();
 
+  // Close dropdowns on outside click
   useEffect(() => {
-    const tick = setInterval(() => { setNow(new Date()); }, 1000);
-    return () => clearInterval(tick);
+    const handler = e => {
+      if (notifRef.current && !notifRef.current.contains(e.target))  setShowNotif(false);
+      if (exportRef.current && !exportRef.current.contains(e.target)) setShowExport(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   useEffect(() => {
-    const tick = setInterval(() => setRefreshTimer(t => t > 0 ? t - 1 : 300), 1000);
+    const tick = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(tick);
   }, []);
 
-  const atRiskCount = bscData?.advisors?.filter(a =>
-    a.qualification?.pdStatus === 'At Risk' || a.qualification?.pdStatus === 'Off Track'
-  ).length || 0;
+  // Auto-set opDay when effort data loads
+  useEffect(() => {
+    if (effortData?.rows) {
+      const dates = getShiftDates(effortData.rows);
+      const today = getCurrentOperationalDay();
+      if (dates.includes(today)) setOpDay(today);
+      else if (dates.length > 0) setOpDay(dates[dates.length - 1]);
+    }
+  }, [effortData]);
 
-  const reconCount  = reconciliationQueue.length;
+  const atRiskCount = bscData?.advisors?.filter(a=>a.qualification?.pdStatus==='At Risk'||a.qualification?.pdStatus==='Off Track').length || 0;
+  const reconCount  = state.reconciliationQueue?.length || 0;
   const totalAlerts = atRiskCount + reconCount;
 
-  const fmtTime = d => d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:true });
-  const fmtRefresh = s => `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`;
+  const fmtTime  = d => d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true});
+  const fmtDate  = d => d.toLocaleDateString('en-IN',{weekday:'short',day:'2-digit',month:'short'});
 
-  // Operational day window label
-  const opDayLabelStr = (() => {
-    const d = new Date(opDay + 'T10:00:00');
-    const d2 = new Date(d); d2.setDate(d2.getDate() + 1);
-    const fmt = dt => dt.toLocaleDateString('en-IN', { day:'numeric', month:'short' });
-    return `${fmt(d)} (10:00 AM – ${fmt(d2)} 09:59 AM)`;
-  })();
+  // Page export config
+  const expCfg = PAGE_EXPORT_CONFIG[activeTab] || PAGE_EXPORT_CONFIG.default;
+  const allDates = getShiftDates(effortData?.rows || []);
+
+  const handleExport = async (fmt) => {
+    setExporting(fmt); setShowExport(false);
+    const advisors = bscData?.advisors || [];
+    const absentNames = new Set(Object.keys(absenceOverrides||{}).filter(n=>(absenceOverrides[n]||[]).length>0));
+    const filtered = advisors.filter(a=>!absentNames.has(a.name));
+    try {
+      if (fmt==='excel')        await exportBSCExcel(filtered, { absentNames });
+      else if (fmt==='effort_excel') {
+        const { aggregateFilteredRows, summariseAgg, filterRowsByDate } = await import('../../parsers/effortParser.js');
+        const rows = opDay ? filterRowsByDate(effortData?.rows||[], opDay) : (effortData?.rows||[]);
+        const summary = summariseAgg(aggregateFilteredRows(rows));
+        await exportEffortExcel(summary, opDay);
+      }
+      else if (fmt==='csv')     exportCSV(filtered);
+      else if (fmt==='pdf')     exportPDF(filtered, opDay);
+      else if (fmt==='teams')   copyToTeams(filtered);
+    } catch(e) { console.error(e); }
+    setExporting('');
+  };
 
   return (
-    <header style={{ height:56, background:'white', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', padding:'0 16px', gap:10, flexShrink:0, zIndex:10 }}>
+    <header className="top-header">
+      {/* Mobile hamburger */}
+      <button onClick={onMobileToggle}
+        style={{display:'none',background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--txt2)',padding:'4px'}}
+        className="mobile-menu-btn">☰</button>
+
       {/* Operational Day */}
-      <div style={{ display:'flex', alignItems:'center', gap:6, background:'#f8fafc', border:'1px solid var(--border)', borderRadius:8, padding:'5px 10px', cursor:'pointer', fontSize:12 }}>
-        <span style={{ fontSize:14 }}>📅</span>
+      <div className="header-opday">
+        <span style={{fontSize:14}}>📅</span>
         <div>
-          <div style={{ fontSize:9, color:'var(--text-muted)', fontWeight:700, textTransform:'uppercase' }}>Operational Day</div>
-          <div style={{ fontWeight:700, fontSize:11 }}>
-            <input type="date" value={opDay} onChange={e => setOpDay(e.target.value)}
-              style={{ border:'none', background:'transparent', fontSize:11, fontWeight:700, cursor:'pointer', color:'var(--text-primary)', outline:'none' }} />
-          </div>
-          <div style={{ fontSize:9, color:'var(--text-muted)' }}>{opDayLabelStr}</div>
+          <div className="header-opday-label">Shift Date</div>
+          <select value={opDay} onChange={e=>setOpDay(e.target.value)}
+            style={{border:'none',background:'transparent',fontWeight:700,fontSize:11.5,color:'var(--brand-d)',cursor:'pointer',outline:'none'}}>
+            <option value="">All Dates (QTD)</option>
+            {[...allDates].reverse().map(d=>(
+              <option key={d} value={d}>{formatShiftDate(d)}</option>
+            ))}
+            {!allDates.includes(opDay) && opDay && <option value={opDay}>{formatShiftDate(opDay)} (today)</option>}
+          </select>
+          <div style={{fontSize:9,color:'var(--brand-d)',opacity:.7}}>{opDayLabel(opDay)}</div>
         </div>
       </div>
 
-      {/* Shift View */}
-      <div style={{ display:'flex', gap:4 }}>
-        {['All','ROW','US'].map(s => (
-          <button key={s} onClick={() => setShiftView(s)}
-            style={{ padding:'4px 10px', borderRadius:6, fontSize:11, fontWeight:700, cursor:'pointer', border:'1px solid', borderColor: shiftView===s?'var(--em-green)':'var(--border)', background: shiftView===s?'var(--em-green-bg)':'white', color: shiftView===s?'var(--em-green)':'var(--text-secondary)' }}>
-            {s === 'All' ? 'All Shifts' : `${s} Shift`}
-            {s !== 'All' && shiftView===s && <span style={{ marginLeft:4, fontSize:9, color:'#16a34a' }}>●</span>}
+      {/* Live clock */}
+      <div className="header-clock">{fmtTime(now)}</div>
+
+      <div className="header-spacer"/>
+
+      {/* Page-contextual export */}
+      {expCfg && (
+        <div className="ctx-export-wrap" ref={exportRef}>
+          <button className="header-export-btn" onClick={()=>setShowExport(!showExport)} disabled={!!exporting}>
+            {exporting ? '⏳' : '📤'} {exporting ? 'Exporting...' : expCfg.label} ▾
           </button>
-        ))}
-      </div>
-
-      {/* Current time */}
-      <div style={{ background:'#0f172a', color:'white', borderRadius:8, padding:'5px 12px', fontSize:13, fontWeight:800, fontFamily:'monospace', letterSpacing:'.05em' }}>
-        {fmtTime(now)}
-      </div>
-
-      <div style={{ flex:1 }} />
-
-      {/* Upload quick action */}
-      <button className="btn btn-primary" onClick={() => setTab('upload')} style={{ fontSize:12, padding:'6px 14px' }}>
-        ⬆ Upload
-      </button>
-
-      {/* Export quick action */}
-      <button className="btn btn-outline" onClick={() => setTab('export')} style={{ fontSize:12, padding:'6px 14px' }}>
-        📤 Export ▾
-      </button>
-
-      {/* Auto-refresh timer */}
-      <div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:'var(--text-muted)', background:'#f8fafc', border:'1px solid var(--border)', borderRadius:6, padding:'4px 8px' }}>
-        <span>🔄</span><span style={{ fontFamily:'monospace', fontWeight:700 }}>{fmtRefresh(refreshTimer)}</span>
-      </div>
+          {showExport && (
+            <div className="ctx-export-menu">
+              <div style={{padding:'8px 12px',fontSize:10,color:'var(--txt3)',fontWeight:700,textTransform:'uppercase',letterSpacing:'.04em'}}>
+                {expCfg.label}
+              </div>
+              <div className="ctx-export-divider"/>
+              {expCfg.formats.map(fmt=>(
+                <div key={fmt} className="ctx-export-item" onClick={()=>handleExport(fmt)}>
+                  <span style={{fontSize:16}}>{FORMAT_LABELS[fmt]?.split(' ')[0]}</span>
+                  <span>{FORMAT_LABELS[fmt]?.split(' ').slice(1).join(' ')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Notifications */}
-      <div style={{ position:'relative' }}>
-        <button onClick={() => setShowNotif(!showNotif)} style={{ width:34, height:34, borderRadius:'50%', border:'1px solid var(--border)', background:'white', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', position:'relative', fontSize:16 }}>
+      <div style={{position:'relative'}} ref={notifRef}>
+        <button className="header-icon-btn" onClick={()=>setShowNotif(!showNotif)}>
           🔔
-          {totalAlerts > 0 && (
-            <span style={{ position:'absolute', top:-2, right:-2, background:'#dc2626', color:'white', fontSize:9, fontWeight:900, borderRadius:'50%', width:16, height:16, display:'flex', alignItems:'center', justifyContent:'center' }}>
-              {totalAlerts > 9 ? '9+' : totalAlerts}
-            </span>
-          )}
+          {totalAlerts > 0 && <span className="header-notif-dot"/>}
         </button>
         {showNotif && (
-          <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, width:280, background:'white', border:'1px solid var(--border)', borderRadius:10, boxShadow:'0 8px 24px rgba(0,0,0,.12)', zIndex:100, overflow:'hidden' }}>
-            <div style={{ padding:'10px 14px', fontWeight:700, fontSize:13, borderBottom:'1px solid var(--border)', display:'flex', justifyContent:'space-between' }}>
+          <div className="notif-dropdown">
+            <div className="notif-header">
               <span>Notifications</span>
-              <span style={{ fontSize:11, color:'var(--text-muted)' }}>{totalAlerts} active</span>
+              <span style={{fontSize:11,color:'var(--txt3)'}}>{totalAlerts} active</span>
             </div>
             {reconCount > 0 && (
-              <div style={{ padding:'10px 14px', borderBottom:'1px solid var(--border)', cursor:'pointer', background:'#fff7ed' }} onClick={() => { setTab('reconciliation'); setShowNotif(false); }}>
-                <div style={{ fontWeight:700, fontSize:12, color:'#9a3412' }}>🔄 {reconCount} Reconciliation Anomalies</div>
-                <div style={{ fontSize:11, color:'#c2410c' }}>Future-timestamp rows need review</div>
+              <div className="notif-item" onClick={()=>{setTab('reconciliation');setShowNotif(false);}}>
+                <div className="notif-title" style={{color:'var(--orange)'}}>🔄 {reconCount} Reconciliation Anomalies</div>
+                <div className="notif-sub">Future-timestamp rows need review</div>
               </div>
             )}
             {atRiskCount > 0 && (
-              <div style={{ padding:'10px 14px', cursor:'pointer' }} onClick={() => { setTab('atrisk'); setShowNotif(false); }}>
-                <div style={{ fontWeight:700, fontSize:12, color:'#854d0e' }}>⚠ {atRiskCount} At-Risk Advisors</div>
-                <div style={{ fontSize:11, color:'var(--text-muted)' }}>Advisors at qualification risk</div>
+              <div className="notif-item" onClick={()=>{setTab('atrisk');setShowNotif(false);}}>
+                <div className="notif-title" style={{color:'var(--yellow)'}}>⚠ {atRiskCount} Advisors At Risk</div>
+                <div className="notif-sub">Qualification risk — needs intervention</div>
               </div>
             )}
-            {totalAlerts === 0 && <div style={{ padding:'20px 14px', textAlign:'center', color:'var(--text-muted)', fontSize:12 }}>✅ All clear</div>}
+            {totalAlerts===0 && <div style={{padding:'20px',textAlign:'center',color:'var(--txt3)',fontSize:12}}>✅ All systems clear</div>}
           </div>
         )}
       </div>
 
-      {/* User avatar */}
-      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-        <div style={{ width:32, height:32, borderRadius:'50%', background:'var(--em-green)', color:'white', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, fontSize:13 }}>
-          {(auth.user || 'U')[0].toUpperCase()}
+      {/* User */}
+      <div className="header-user">
+        <div className="header-avatar">{(auth.user||'U')[0].toUpperCase()}</div>
+        <div>
+          <div className="header-user-name">{auth.user||'User'}</div>
+          <div className="header-user-role">{auth.role?.toUpperCase()} · {fmtDate(now)}</div>
         </div>
-        <div style={{ fontSize:11, lineHeight:1.3 }}>
-          <div style={{ fontWeight:700 }}>{auth.user || 'User'}</div>
-          <div style={{ color:'var(--text-muted)', fontSize:10 }}>{auth.role} View</div>
-        </div>
-        <button className="btn btn-outline btn-sm" onClick={logout} style={{ fontSize:11 }}>Out</button>
       </div>
     </header>
   );
